@@ -13,6 +13,7 @@ import '../../../core/services/favorites_service.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/utils/formatters.dart';
+import '../../main_nav/controllers/main_nav_controller.dart';
 
 class AccountView extends StatefulWidget {
   const AccountView({super.key});
@@ -631,9 +632,13 @@ class _AccountViewState extends State<AccountView> {
                               child: OutlinedButton(
                                 onPressed: () async {
                                   await auth.signOut();
+                                  if (Get.isRegistered<MainNavController>()) {
+                                    Get.find<MainNavController>().currentIndex.value = 0;
+                                  }
+                                  Get.offAllNamed(AppRoutes.mainNav);
                                   Get.snackbar(
-                                    'تم',
-                                    'تم تسجيل الخروج بنجاح',
+                                    'تم تسجيل الخروج',
+                                    'تم مسح كافة البيانات وتسجيل الخروج بنجاح',
                                     snackPosition: SnackPosition.TOP,
                                     backgroundColor: AppColors.navyMedium,
                                     colorText: Colors.white,
@@ -861,10 +866,13 @@ class _AccountViewState extends State<AccountView> {
                                     );
                                   } catch (_) {}
                                   await auth.signOut();
-                                  Get.back();
+                                  if (Get.isRegistered<MainNavController>()) {
+                                    Get.find<MainNavController>().currentIndex.value = 0;
+                                  }
+                                  Get.offAllNamed(AppRoutes.mainNav);
                                   Get.snackbar(
                                     'تم حذف الحساب',
-                                    'تم حذف حسابك نهائياً. نأسف لرحيلك.',
+                                    'تم حذف حسابك ومسح كافة بياناتك بنجاح',
                                     snackPosition: SnackPosition.TOP,
                                     backgroundColor: AppColors.navyMedium,
                                     colorText: Colors.white,

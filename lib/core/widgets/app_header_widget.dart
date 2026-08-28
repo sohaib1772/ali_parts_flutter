@@ -59,7 +59,7 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
       ),
       child: Row(
         children: [
-          // Back button if screen is poppable or showBack is true
+          // Back button (shown only on poppable sub-screens)
           if (canGoBack) ...[
             GestureDetector(
               onTap: onBackPressed ?? () {
@@ -70,9 +70,8 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
                 }
               },
               child: Container(
-                width: 36,
-                height: 36,
-                margin: const EdgeInsets.only(left: 6),
+                width: 38,
+                height: 38,
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   color: Color(0xFF132B45),
@@ -86,49 +85,54 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
+            const SizedBox(width: 10),
           ],
 
-          // Store Circular Avatar / Logo
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF102A43),
-              border: Border.all(color: AppColors.gold, width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.gold.withValues(alpha: 0.25),
-                  blurRadius: 6,
-                ),
-              ],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: settings.storeLogo.isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: settings.storeLogo,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => Image.asset(
-                      'assets/icons/app_icon.png',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.directions_car_filled_rounded,
-                        color: AppColors.gold,
-                        size: 24,
-                      ),
-                    ),
-                  )
-                : Image.asset(
-                    'assets/icons/app_icon.png',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.directions_car_filled_rounded,
-                      color: AppColors.gold,
-                      size: 24,
-                    ),
+          // Store Circular Avatar / Logo (shown ONLY on root screens when cannot go back)
+          if (!canGoBack) ...[
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF102A43),
+                border: Border.all(color: AppColors.gold, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.gold.withValues(alpha: 0.25),
+                    blurRadius: 6,
                   ),
-          ),
-          const SizedBox(width: 10),
+                ],
+              ),
+              padding: const EdgeInsets.all(3.5),
+              child: ClipOval(
+                child: settings.storeLogo.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: settings.storeLogo,
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => Image.asset(
+                          'assets/icons/app_icon.png',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.directions_car_filled_rounded,
+                            color: AppColors.gold,
+                            size: 24,
+                          ),
+                        ),
+                      )
+                    : Image.asset(
+                        'assets/icons/app_icon.png',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.directions_car_filled_rounded,
+                          color: AppColors.gold,
+                          size: 24,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
 
           // Screen Title & Store Gold Tagline
           Expanded(

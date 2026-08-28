@@ -185,7 +185,7 @@ class CartService extends GetxService {
   void clearLocalCache() {
     cartItems.clear();
     _updateCount();
-    _save();
+    _box.remove(_storageKey);
   }
 
   double get subtotalIqd => cartItems.fold<double>(0.0, (sum, item) => sum + item.totalPrice);

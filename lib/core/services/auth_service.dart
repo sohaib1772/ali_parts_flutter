@@ -445,9 +445,7 @@ class AuthService extends GetxService {
   }
 
   Future<void> _clearSession() async {
-    await _secureStorage.delete(AppConstants.secureKeyAccessToken);
-    await _secureStorage.delete(AppConstants.secureKeyRefreshToken);
-    await _secureStorage.delete(AppConstants.secureKeyUserId);
+    await _secureStorage.deleteAll();
     isLoggedIn.value = false;
     currentUser.value = null;
     userEmail.value = '';

@@ -145,7 +145,8 @@ class FavoritesService extends GetxService {
   void clearLocalCache() {
     favoriteIds.clear();
     favoriteProducts.clear();
-    _saveToStorage();
+    _box.remove(_storageKey);
+    _box.remove(_productsStorageKey);
   }
 
   void _saveToStorage() {
