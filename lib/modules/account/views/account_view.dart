@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_header_widget.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -46,7 +47,6 @@ class _AccountViewState extends State<AccountView> {
   Widget build(BuildContext context) {
     final settings = Get.find<SettingsService>();
     final auth = Get.find<AuthService>();
-    final cart = Get.find<CartService>();
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -64,148 +64,12 @@ class _AccountViewState extends State<AccountView> {
             color: const Color(0xFFF8FAFC),
             child: Column(
               children: [
-                // Top AppHeader: Store Avatar + "حسابي" + Subtitle + Action Icons
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF0A192F),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFF102A43),
-                          border: Border.all(color: AppColors.gold, width: 1.5),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: ClipOval(
-                          child: Image.asset(
-                            'assets/icons/app_icon.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.directions_car_filled_rounded,
-                              color: AppColors.gold,
-                              size: 24,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              'حسابي',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              settings.storeTagline,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppColors.gold,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                const AppHeaderWidget(
+                title: 'حسابي',
+                showBack: false,
+              ),
 
-                      // Search Icon
-                      GestureDetector(
-                        onTap: () => Get.toNamed(AppRoutes.search),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF132B45),
-                          ),
-                          child: const Icon(Icons.search_rounded, color: Colors.white, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // Notification Bell
-                      GestureDetector(
-                        onTap: () => Get.toNamed(AppRoutes.notifications),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF132B45),
-                          ),
-                          child: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // Cart Icon with Badge
-                      Obx(() {
-                        final count = cart.cartCount.value;
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            GestureDetector(
-                              onTap: () => Get.toNamed(AppRoutes.cart),
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Color(0xFF132B45),
-                                ),
-                                child: const Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 20),
-                              ),
-                            ),
-                            if (count > 0)
-                              Positioned(
-                                top: -4,
-                                right: -4,
-                                child: Container(
-                                  padding: const EdgeInsets.all(3),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: const Color(0xFFEAB308),
-                                    border: Border.all(color: const Color(0xFF0A192F), width: 1.5),
-                                  ),
-                                  constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                                  child: Center(
-                                    child: Text(
-                                      count > 99 ? '99+' : count.toString(),
-                                      style: const TextStyle(
-                                        color: Color(0xFF0F172A),
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-
-                // Scrollable Body Content
+              // Scrollable Body Content
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

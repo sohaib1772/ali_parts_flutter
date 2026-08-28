@@ -1,14 +1,12 @@
+import '../../../core/widgets/app_header_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../../../app/config/api_constants.dart';
 import '../../../app/config/app_constants.dart';
-import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/network/dio_client.dart';
-import '../../../core/services/cart_service.dart';
 import '../../../core/services/secure_storage_service.dart';
-import '../../../core/services/settings_service.dart';
 
 class AddressesView extends StatefulWidget {
   const AddressesView({super.key});
@@ -18,8 +16,6 @@ class AddressesView extends StatefulWidget {
 }
 
 class _AddressesViewState extends State<AddressesView> {
-  final CartService _cart = Get.find<CartService>();
-  final SettingsService _settings = Get.find<SettingsService>();
 
   List<Map<String, dynamic>> _addresses = [];
   bool _isLoading = true;
@@ -159,136 +155,14 @@ class _AddressesViewState extends State<AddressesView> {
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
       child: Scaffold(
-        backgroundColor: const Color(0xFFF8FAFC),
+        backgroundColor: AppColors.navyDark,
         body: SafeArea(
           bottom: false,
           child: Column(
             children: [
-              // Top AppHeader
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: const BoxDecoration(
-                  color: Color(0xFF0A192F),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 8,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFF102A43),
-                        border: Border.all(color: AppColors.gold, width: 1.5),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/icons/app_icon.png',
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.directions_car_filled_rounded,
-                            color: AppColors.gold,
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            'العناوين',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _settings.storeTagline,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.gold,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Search Icon
-                    GestureDetector(
-                      onTap: () => Get.toNamed(AppRoutes.search),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0xFF132B45),
-                        ),
-                        child: const Icon(Icons.search_rounded, color: Colors.white, size: 20),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-
-                    // Cart Icon with Badge
-                    Obx(() {
-                      final count = _cart.cartCount.value;
-                      return Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          GestureDetector(
-                            onTap: () => Get.toNamed(AppRoutes.cart),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Color(0xFF132B45),
-                              ),
-                              child: const Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 20),
-                            ),
-                          ),
-                          if (count > 0)
-                            Positioned(
-                              top: -4,
-                              right: -4,
-                              child: Container(
-                                padding: const EdgeInsets.all(3),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: const Color(0xFFEAB308),
-                                  border: Border.all(color: const Color(0xFF0A192F), width: 1.5),
-                                ),
-                                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                                child: Center(
-                                  child: Text(
-                                    count > 99 ? '99+' : count.toString(),
-                                    style: const TextStyle(
-                                      color: Color(0xFF0F172A),
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      );
-                    }),
-                  ],
-                ),
+              const AppHeaderWidget(
+                title: 'عناويني',
+                showBack: true,
               ),
 
               // Body Content
