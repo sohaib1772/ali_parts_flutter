@@ -72,6 +72,10 @@ class AuthService extends GetxService {
     }
 
     try {
+      await closeCustomTabs();
+    } catch (_) {}
+
+    try {
       final errorDesc = uri.queryParameters['error_description'] ??
           _extractFromFragment(uri.fragment, 'error_description');
       final error = uri.queryParameters['error'] ??
@@ -237,6 +241,10 @@ class AuthService extends GetxService {
         },
       );
 
+      try {
+        await closeCustomTabs();
+      } catch (_) {}
+
       if (result['status'] == 'success') {
         await fetchUserProfile();
         syncServices();
@@ -244,6 +252,9 @@ class AuthService extends GetxService {
 
       return result;
     } catch (e, stack) {
+      try {
+        await closeCustomTabs();
+      } catch (_) {}
       AppLogger.e('Error starting OAuth for $provider', e, stack);
       _authCompleter = null;
       return {'status': 'error', 'message': 'تعذّر فتح صفحة تسجيل الدخول'};

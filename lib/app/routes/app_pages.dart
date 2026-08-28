@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../modules/splash/views/splash_view.dart';
 import '../../modules/splash/controllers/splash_controller.dart';
@@ -133,6 +134,10 @@ class AppPages {
       name: AppRoutes.admin,
       page: () => const AdminView(),
       transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: '/auth',
+      page: () => const SizedBox.shrink(),
     ),
   ];
 }

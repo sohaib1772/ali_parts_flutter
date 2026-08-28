@@ -74,6 +74,9 @@ class AliPartsApp extends StatelessWidget {
         initialBinding: InitialBinding(),
         initialRoute: AppRoutes.splash,
         getPages: AppPages.routes,
+        onUnknownRoute: (settings) => MaterialPageRoute(
+          builder: (_) => const SizedBox.shrink(),
+        ),
         translations: AppTranslations(),
         locale: const Locale('ar', 'IQ'),
         fallbackLocale: const Locale('ar', 'IQ'),

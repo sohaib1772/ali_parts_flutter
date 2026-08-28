@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/settings_service.dart';
@@ -25,7 +26,11 @@ class _LoginViewState extends State<LoginView> {
     if (!mounted) return;
 
     if (result['status'] == 'success') {
-      Get.back(result: true);
+      if (Navigator.of(context).canPop()) {
+        Get.back(result: true);
+      } else {
+        Get.offAllNamed(AppRoutes.mainNav);
+      }
       Get.snackbar(
         'أهلاً بك!',
         'تم تسجيل الدخول بنجاح',
@@ -58,7 +63,11 @@ class _LoginViewState extends State<LoginView> {
     if (!mounted) return;
 
     if (result['status'] == 'success') {
-      Get.back(result: true);
+      if (Navigator.of(context).canPop()) {
+        Get.back(result: true);
+      } else {
+        Get.offAllNamed(AppRoutes.mainNav);
+      }
       Get.snackbar(
         'أهلاً بك!',
         'تم تسجيل الدخول بنجاح',

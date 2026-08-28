@@ -9,7 +9,7 @@ import '../services/settings_service.dart';
 class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
   final String? title;
   final String? subtitle;
-  final bool showBack;
+  final bool? showBack;
   final VoidCallback? onBackPressed;
   final bool showSearch;
   final bool showNotifications;
@@ -20,7 +20,7 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
     super.key,
     this.title,
     this.subtitle,
-    this.showBack = false,
+    this.showBack,
     this.onBackPressed,
     this.showSearch = true,
     this.showNotifications = true,
@@ -42,6 +42,9 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
 
     final displaySubtitle = subtitle ?? (settings.storeTagline.isNotEmpty ? settings.storeTagline : 'قطع أصلية · العراق');
 
+    // Auto-detect if screen can be popped/navigated back unless explicitly overridden
+    final canGoBack = showBack ?? Navigator.of(context).canPop();
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
@@ -56,24 +59,33 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
       ),
       child: Row(
         children: [
-          // Back button if requested
-          if (showBack) ...[
+          // Back button if screen is poppable or showBack is true
+          if (canGoBack) ...[
             GestureDetector(
-              onTap: onBackPressed ?? () => Get.back(),
+              onTap: onBackPressed ?? () {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                } else {
+                  Get.back();
+                }
+              },
               child: Container(
-                padding: const EdgeInsets.all(8),
+                width: 36,
+                height: 36,
+                margin: const EdgeInsets.only(left: 6),
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   color: Color(0xFF132B45),
                 ),
-                child: const Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  color: Colors.white,
-                  size: 18,
+                child: const Center(
+                  child: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: Colors.white,
+                    size: 16,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 8),
           ],
 
           // Store Circular Avatar / Logo
