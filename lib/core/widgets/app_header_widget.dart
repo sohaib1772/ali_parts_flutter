@@ -42,8 +42,12 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
 
     final displaySubtitle = subtitle ?? (settings.storeTagline.isNotEmpty ? settings.storeTagline : 'قطع أصلية · العراق');
 
-    // Auto-detect if screen can be popped/navigated back unless explicitly overridden
-    final canGoBack = showBack ?? Navigator.of(context).canPop();
+    // Robust detection: if showBack is set, honor it. Otherwise check if route can pop.
+    final canGoBack = showBack ?? (
+      Navigator.of(context).canPop() || 
+      (ModalRoute.of(context)?.canPop ?? false) || 
+      (Get.key.currentState?.canPop() ?? false)
+    );
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -59,7 +63,7 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
       ),
       child: Row(
         children: [
-          // Back button (shown only on poppable sub-screens)
+          // Back button (shown whenever screen is poppable or showBack is true)
           if (canGoBack) ...[
             GestureDetector(
               onTap: onBackPressed ?? () {

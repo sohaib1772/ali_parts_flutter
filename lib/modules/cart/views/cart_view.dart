@@ -5,8 +5,8 @@ import 'package:get/get.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/cart_service.dart';
-import '../../../core/services/settings_service.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/app_header_widget.dart';
 import '../../../data/models/cart_item_model.dart';
 
 class CartView extends StatelessWidget {
@@ -15,7 +15,6 @@ class CartView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cart = Get.find<CartService>();
-    final settings = Get.find<SettingsService>();
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -33,145 +32,11 @@ class CartView extends StatelessWidget {
             color: AppColors.background,
             child: Column(
               children: [
-                // 1. Top AppHeader: Store Avatar + "السلة" + Actions
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: const BoxDecoration(
-                    color: AppColors.navyDark,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black12,
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      // Store Circular Avatar
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFF102A43),
-                          border: Border.all(color: AppColors.gold, width: 1.5),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: ClipOval(
-                          child: Image.asset(
-                            'assets/icons/app_icon.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.directions_car_filled_rounded,
-                              color: AppColors.gold,
-                              size: 26,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-
-                      // Title "السلة" & Tagline
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              'السلة',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              settings.storeTagline,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppColors.gold,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // Search Icon
-                      GestureDetector(
-                        onTap: () => Get.toNamed(AppRoutes.search),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF132B45),
-                          ),
-                          child: const Icon(Icons.search_rounded, color: Colors.white, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // Notification Bell
-                      GestureDetector(
-                        onTap: () => Get.toNamed(AppRoutes.orders),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF132B45),
-                          ),
-                          child: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // Cart Icon with Badge
-                      Obx(() {
-                        final count = cart.cartCount.value;
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Color(0xFF132B45),
-                              ),
-                              child: const Icon(Icons.shopping_cart_outlined, color: AppColors.gold, size: 20),
-                            ),
-                            if (count > 0)
-                              Positioned(
-                                top: -4,
-                                right: -4,
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: const Color(0xFFEAB308),
-                                    border: Border.all(color: AppColors.navyDark, width: 1.5),
-                                  ),
-                                  constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                                  child: Center(
-                                    child: Text(
-                                      count > 99 ? '99+' : count.toString(),
-                                      style: const TextStyle(
-                                        color: Color(0xFF0F172A),
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-                      }),
-                    ],
-                  ),
+                // 1. Top Unified AppHeader with Back Button
+                const AppHeaderWidget(
+                  title: 'السلة',
+                  showBack: true,
+                  showCart: false,
                 ),
 
                 // 2. Cart Content

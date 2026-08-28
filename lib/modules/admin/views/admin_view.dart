@@ -1346,6 +1346,7 @@ class _AdminViewState extends State<AdminView> {
                 // Top Unified AppHeader with auto back button
                 const AppHeaderWidget(
                   title: 'لوحة الإدارة',
+                  showBack: true,
                 ),
 
                 // Single outer scrollable ListView for the whole page!

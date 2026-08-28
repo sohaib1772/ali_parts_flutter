@@ -17,7 +17,6 @@ class OrdersView extends StatelessWidget {
             children: [
               const AppHeaderWidget(
                 title: 'طلباتي',
-                showBack: false,
               ),
               Expanded(
                 child: Center(

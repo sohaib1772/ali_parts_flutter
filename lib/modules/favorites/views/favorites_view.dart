@@ -22,7 +22,6 @@ class FavoritesView extends StatelessWidget {
             children: [
               const AppHeaderWidget(
                 title: 'المفضلة',
-                showBack: false,
               ),
               Expanded(
                 child: Obx(() {
