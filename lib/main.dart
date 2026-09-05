@@ -12,6 +12,7 @@ import 'app/translations/app_translations.dart';
 import 'core/services/connectivity_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/secure_storage_service.dart';
+import 'app/config/firebase_options.dart';
 import 'core/services/storage_service.dart';
 import 'core/services/auth_service.dart';
 
@@ -19,7 +20,11 @@ import 'core/services/auth_service.dart';
 /// Must be a top-level function (not a method).
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (_) {}
   // Background push notifications are shown automatically by the OS.
 }
 
@@ -27,8 +32,14 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Firebase — must be first
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint('[Firebase] init failed: $e');
+  }
 
   // Orientations
   await SystemChrome.setPreferredOrientations([
