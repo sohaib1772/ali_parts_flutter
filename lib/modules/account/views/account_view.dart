@@ -683,7 +683,8 @@ class _AccountViewState extends State<AccountView> {
                         );
                       }),
 
-                      const SizedBox(height: 24),
+                      // 5. Generous bottom space so content completely clears the floating bottom navigation bar
+                      const SizedBox(height: 120),
                     ],
                   ),
                 ),

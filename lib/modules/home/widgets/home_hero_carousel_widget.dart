@@ -69,12 +69,15 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
   Widget build(BuildContext context) {
     if (widget.banners.isEmpty) return const SizedBox.shrink();
 
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final bannerHeight = (screenWidth * 0.42).clamp(175.0, 320.0);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
         children: [
           Container(
-            height: 175,
+            height: bannerHeight,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: const Color(0xFFE2E8F0)),

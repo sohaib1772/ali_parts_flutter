@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 import '../controllers/products_controller.dart';
 import '../widgets/product_card_widget.dart';
 
@@ -71,12 +72,7 @@ class ProductsView extends GetView<ProductsController> {
                             SliverPadding(
                               padding: const EdgeInsets.all(16),
                               sliver: SliverGrid(
-                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  mainAxisSpacing: 12,
-                                  crossAxisSpacing: 12,
-                                  childAspectRatio: 0.58,
-                                ),
+                                gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                 delegate: SliverChildBuilderDelegate(
                                   (ctx, i) => ProductCardWidget(product: controller.products[i]),
                                   childCount: controller.products.length,

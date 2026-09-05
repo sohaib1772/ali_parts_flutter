@@ -5,6 +5,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../core/services/favorites_service.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 import '../../products/widgets/product_card_widget.dart';
 
 class FavoritesView extends StatefulWidget {
@@ -67,14 +68,9 @@ class _FavoritesViewState extends State<FavoritesView> {
 
                       return GridView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
                         itemCount: favorites.favoriteProducts.length,
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.58,
-                        ),
+                        gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                         itemBuilder: (ctx, i) {
                           return ProductCardWidget(product: favorites.favoriteProducts[i]);
                         },
@@ -84,7 +80,7 @@ class _FavoritesViewState extends State<FavoritesView> {
                     // Floating Glass Scroll To Top Button
                     GlassScrollToTopButton(
                       scrollController: _scrollController,
-                      bottom: 82,
+                      bottom: 90,
                       left: 18,
                     ),
                   ],

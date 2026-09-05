@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 import '../../../data/models/category_model.dart';
 
 class HomeCategoriesGridWidget extends StatelessWidget {
@@ -37,17 +38,12 @@ class HomeCategoriesGridWidget extends StatelessWidget {
           ),
           const SizedBox(height: 12),
 
-          // 3 Columns Grid
+          // Responsive Categories Grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: categories.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: 0.72,
-            ),
+            gridDelegate: ResponsiveGridHelper.getCategoryGridDelegate(context),
             itemBuilder: (ctx, i) {
               final cat = categories[i];
               return GestureDetector(

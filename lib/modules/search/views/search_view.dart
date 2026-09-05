@@ -5,6 +5,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/common_filter_bar_widget.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 import '../../../data/models/brand_model.dart';
 import '../../../data/models/car_model_model.dart';
 import '../../../data/models/category_model.dart';
@@ -437,16 +438,11 @@ class _SearchViewState extends State<SearchView> {
                           ),
                         ),
 
-                        // 2-Column Product Grid
+                        // Responsive Product Grid
                         SliverPadding(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                           sliver: SliverGrid(
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              mainAxisSpacing: 12,
-                              crossAxisSpacing: 12,
-                              childAspectRatio: 0.58,
-                            ),
+                            gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                             delegate: SliverChildBuilderDelegate(
                               (ctx, i) => ProductCardWidget(product: _results[i]),
                               childCount: _results.length,

@@ -11,6 +11,7 @@ import '../widgets/home_hero_carousel_widget.dart';
 import '../widgets/home_categories_grid_widget.dart';
 import '../widgets/home_deals_carousel_widget.dart';
 import '../../products/widgets/product_card_widget.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 
 class HomeView extends GetView<HomeController> {
   const HomeView({super.key});
@@ -199,12 +200,7 @@ class HomeView extends GetView<HomeController> {
                                   SliverPadding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                     sliver: SliverGrid(
-                                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
-                                        mainAxisSpacing: 12,
-                                        crossAxisSpacing: 12,
-                                        childAspectRatio: 0.58,
-                                      ),
+                                      gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                       delegate: SliverChildBuilderDelegate(
                                         (ctx, i) => ProductCardWidget(product: controller.allProducts[i]),
                                         childCount: controller.allProducts.length,
@@ -254,12 +250,7 @@ class HomeView extends GetView<HomeController> {
                                   SliverPadding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                     sliver: SliverGrid(
-                                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
-                                        mainAxisSpacing: 12,
-                                        crossAxisSpacing: 12,
-                                        childAspectRatio: 0.58,
-                                      ),
+                                      gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                       delegate: SliverChildBuilderDelegate(
                                         (ctx, i) => ProductCardWidget(product: controller.featuredProducts[i]),
                                         childCount: controller.featuredProducts.length,
@@ -292,12 +283,7 @@ class HomeView extends GetView<HomeController> {
                                   SliverPadding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                     sliver: SliverGrid(
-                                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
-                                        mainAxisSpacing: 12,
-                                        crossAxisSpacing: 12,
-                                        childAspectRatio: 0.58,
-                                      ),
+                                      gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                       delegate: SliverChildBuilderDelegate(
                                         (ctx, i) => ProductCardWidget(product: controller.bestSellers[i]),
                                         childCount: controller.bestSellers.length,
@@ -330,12 +316,7 @@ class HomeView extends GetView<HomeController> {
                                   SliverPadding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                     sliver: SliverGrid(
-                                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
-                                        mainAxisSpacing: 12,
-                                        crossAxisSpacing: 12,
-                                        childAspectRatio: 0.58,
-                                      ),
+                                      gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                       delegate: SliverChildBuilderDelegate(
                                         (ctx, i) => ProductCardWidget(product: controller.allProducts[i]),
                                         childCount: controller.allProducts.length,
@@ -358,7 +339,7 @@ class HomeView extends GetView<HomeController> {
 
                               // Bottom space for floating bottom navigation bar
                               const SliverToBoxAdapter(
-                                child: SizedBox(height: 95),
+                                child: SizedBox(height: 120),
                               ),
                             ],
                           );
@@ -371,7 +352,7 @@ class HomeView extends GetView<HomeController> {
                 // Reusable Glassmorphic Animated "Scroll to Top" Button on the LEFT
                 GlassScrollToTopButton(
                   scrollController: controller.scrollController,
-                  bottom: 82,
+                  bottom: 90,
                   left: 18,
                 ),
               ],

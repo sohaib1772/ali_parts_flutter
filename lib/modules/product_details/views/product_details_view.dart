@@ -6,6 +6,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/responsive_grid_helper.dart';
 import '../../products/widgets/product_card_widget.dart';
 import '../controllers/product_details_controller.dart';
 
@@ -1015,12 +1016,7 @@ class ProductDetailsView extends GetView<ProductDetailsController> {
                                 GridView.builder(
                                   shrinkWrap: true,
                                   physics: const NeverScrollableScrollPhysics(),
-                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 2,
-                                    childAspectRatio: 0.58,
-                                    crossAxisSpacing: 12,
-                                    mainAxisSpacing: 12,
-                                  ),
+                                  gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                                   itemCount: controller.relatedProducts.length,
                                   itemBuilder: (ctx, i) {
                                     final relProd = controller.relatedProducts[i];

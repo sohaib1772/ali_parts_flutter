@@ -341,7 +341,7 @@ class _OrdersViewState extends State<OrdersView> {
                       color: AppColors.gold,
                       child: ListView.separated(
                         controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
                         itemCount: _orders.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 14),
                         itemBuilder: (ctx, i) {
@@ -539,7 +539,7 @@ class _OrdersViewState extends State<OrdersView> {
                   // Floating Glass Scroll To Top Button
                   GlassScrollToTopButton(
                     scrollController: _scrollController,
-                    bottom: 82,
+                    bottom: 90,
                     left: 18,
                   ),
                 ],
