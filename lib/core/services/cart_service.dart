@@ -8,6 +8,7 @@ import '../../data/models/cart_item_model.dart';
 import '../../data/models/product_model.dart';
 import '../network/dio_client.dart';
 import '../utils/app_logger.dart';
+import '../utils/shipping_calculator.dart';
 import 'secure_storage_service.dart';
 
 class CartService extends GetxService {
@@ -60,13 +61,27 @@ class CartService extends GetxService {
   }
 
   void addToCart(ProductModel product, {int quantity = 1, String? side, String? note}) async {
+    final actualSide = product.hasSideOptions ? side : null;
+    final maxStock = (product.stockQty > 0) ? product.stockQty : 1;
     final existingIndex = cartItems.indexWhere(
-      (item) => item.productId == product.id && item.side == side,
+      (item) => item.productId == product.id && item.side == actualSide,
     );
 
     if (existingIndex != -1) {
       final current = cartItems[existingIndex];
-      final newQty = current.quantity + quantity;
+      if (current.quantity >= maxStock) {
+        Get.snackbar(
+          'تنبيه الكمية',
+          'تمت إضافة الحد الأقصى المتوفر بالمخزن ($maxStock قطعة)',
+          snackPosition: SnackPosition.TOP,
+          backgroundColor: AppColors.navyMedium,
+          colorText: Colors.white,
+          duration: const Duration(seconds: 2),
+          borderRadius: 12,
+        );
+        return;
+      }
+      final newQty = (current.quantity + quantity).clamp(1, maxStock);
       final updated = current.copyWith(
         quantity: newQty,
         product: product,
@@ -74,17 +89,18 @@ class CartService extends GetxService {
       cartItems[existingIndex] = updated;
       _updateQuantityOnServer(current.id, newQty);
     } else {
+      final clampedQty = quantity.clamp(1, maxStock);
       final localId = DateTime.now().millisecondsSinceEpoch.toString();
       final newItem = CartItemModel(
         id: localId,
         productId: product.id,
-        quantity: quantity,
-        side: side,
+        quantity: clampedQty,
+        side: actualSide,
         note: note,
         product: product,
       );
       cartItems.add(newItem);
-      _addItemToServer(product.id, quantity, side, note);
+      _addItemToServer(product.id, clampedQty, actualSide, note);
     }
 
     _updateCount();
@@ -108,6 +124,21 @@ class CartService extends GetxService {
     }
     final index = cartItems.indexWhere((item) => item.id == itemId);
     if (index != -1) {
+      final current = cartItems[index];
+      final maxStock = (current.product != null && current.product!.stockQty > 0)
+          ? current.product!.stockQty
+          : 999;
+      if (newQuantity > maxStock) {
+        Get.snackbar(
+          'تنبيه الكمية',
+          'الكمية المتوفرة في المخزن هي $maxStock فقط',
+          snackPosition: SnackPosition.TOP,
+          backgroundColor: AppColors.navyMedium,
+          colorText: Colors.white,
+          duration: const Duration(seconds: 2),
+        );
+        newQuantity = maxStock;
+      }
       final updated = cartItems[index].copyWith(quantity: newQuantity);
       cartItems[index] = updated;
       _updateCount();
@@ -121,6 +152,7 @@ class CartService extends GetxService {
     if (index == -1) return;
 
     final current = cartItems[index];
+    if (current.product?.hasSideOptions == false) return;
     if (current.side == newSide) return;
 
     final existingIndex = cartItems.indexWhere(
@@ -189,7 +221,9 @@ class CartService extends GetxService {
   }
 
   double get subtotalIqd => cartItems.fold<double>(0.0, (sum, item) => sum + item.totalPrice);
-  double get deliveryFeeIqd => cartItems.isNotEmpty ? 5000.0 : 0.0;
+  double get deliveryFeeIqd => ShippingCalculator.computeShipping(cartItems);
+  int get shipmentCount => ShippingCalculator.shipmentCount(cartItems);
+  bool get hasSplitShipment => shipmentCount > 1;
   double get totalIqd => subtotalIqd + deliveryFeeIqd;
 
   Future<void> syncWithServer(String userId) async {
@@ -214,11 +248,19 @@ class CartService extends GetxService {
           } else if (m['products'] != null) {
             prod = ProductModel.fromJson(m['products'] as Map<String, dynamic>);
           }
+          final serverQty = (m['quantity'] as num?)?.toInt() ?? 1;
+          final maxStock = (prod != null && prod.stockQty > 0) ? prod.stockQty : serverQty;
+          final safeQty = serverQty > maxStock ? maxStock : serverQty;
+
+          if (safeQty != serverQty && m['id'] != null) {
+            _updateQuantityOnServer(m['id'].toString(), safeQty);
+          }
+
           return CartItemModel(
             id: m['id'] as String? ?? '',
             userId: m['user_id'] as String?,
             productId: m['product_id'] as String? ?? '',
-            quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+            quantity: safeQty,
             side: m['side'] as String?,
             note: m['note'] as String?,
             product: prod,

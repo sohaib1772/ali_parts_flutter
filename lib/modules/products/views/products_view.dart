@@ -2,6 +2,7 @@ import '../../../core/widgets/app_header_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../app/theme/app_colors.dart';
+import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import '../controllers/products_controller.dart';
 import '../widgets/product_card_widget.dart';
 
@@ -29,77 +30,88 @@ class ProductsView extends GetView<ProductsController> {
                 ],
               )),
               Expanded(
-                child: Obx(() {
-        if (controller.isLoading.value) {
-          return const Center(child: CircularProgressIndicator(color: AppColors.gold));
-        }
+                child: Stack(
+                  children: [
+                    Obx(() {
+                      if (controller.isLoading.value) {
+                        return const Center(child: CircularProgressIndicator(color: AppColors.gold));
+                      }
 
-        if (controller.products.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.cardWhite,
-                    border: Border.all(color: AppColors.borderLight),
-                  ),
-                  child: const Icon(Icons.inventory_2_outlined, color: AppColors.gold, size: 48),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'لا توجد منتجات مطابقة للبحث',
-                  style: TextStyle(color: AppColors.textDark, fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          );
-        }
+                      if (controller.products.isEmpty) {
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.cardWhite,
+                                  border: Border.all(color: AppColors.borderLight),
+                                ),
+                                child: const Icon(Icons.inventory_2_outlined, color: AppColors.gold, size: 48),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'لا توجد منتجات مطابقة للبحث',
+                                style: TextStyle(color: AppColors.textDark, fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
 
-        return RefreshIndicator(
-          color: AppColors.gold,
-          backgroundColor: Colors.white,
-          onRefresh: controller.loadProducts,
-          child: CustomScrollView(
-            controller: controller.scrollController,
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.all(16),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 0.60,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (ctx, i) => ProductCardWidget(product: controller.products[i]),
-                    childCount: controller.products.length,
-                  ),
-                ),
-              ),
-              if (controller.isLoadingMore.value)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: AppColors.gold,
+                      return RefreshIndicator(
+                        color: AppColors.gold,
+                        backgroundColor: Colors.white,
+                        onRefresh: controller.loadProducts,
+                        child: CustomScrollView(
+                          controller: controller.scrollController,
+                          slivers: [
+                            SliverPadding(
+                              padding: const EdgeInsets.all(16),
+                              sliver: SliverGrid(
+                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 12,
+                                  crossAxisSpacing: 12,
+                                  childAspectRatio: 0.58,
+                                ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (ctx, i) => ProductCardWidget(product: controller.products[i]),
+                                  childCount: controller.products.length,
+                                ),
+                              ),
+                            ),
+                            if (controller.isLoadingMore.value)
+                              const SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: AppColors.gold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
+                      );
+                    }),
+
+                    // Floating Glass Scroll To Top Button
+                    GlassScrollToTopButton(
+                      scrollController: controller.scrollController,
+                      bottom: 20,
+                      left: 18,
                     ),
-                  ),
+                  ],
                 ),
-            ],
-          ),
-        );
-      }),
               ),
             ],
           ),

@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../data/models/banner_model.dart';
 import '../../../data/models/brand_model.dart';
@@ -8,6 +9,7 @@ import '../../../data/repositories/product_repository.dart';
 
 class HomeController extends GetxController {
   final ProductRepository _productRepo = Get.find<ProductRepository>();
+  final ScrollController scrollController = ScrollController();
 
   final RxBool isLoading = true.obs;
   final RxList<BannerModel> banners = <BannerModel>[].obs;
@@ -18,40 +20,144 @@ class HomeController extends GetxController {
   final RxList<ProductModel> deals = <ProductModel>[].obs;
   final RxList<ProductModel> bestSellers = <ProductModel>[].obs;
 
+  // Infinite Scroll All Products State
+  final RxList<ProductModel> allProducts = <ProductModel>[].obs;
+  final RxBool isLoadingMore = false.obs;
+  final RxBool hasMore = true.obs;
+  final RxInt totalProductsCount = 0.obs;
+  final RxBool showScrollToTop = false.obs;
+  int _offset = 0;
+  static const int _pageSize = 20;
+
   // Filter Bar State
   final Rx<String?> selectedCategoryId = Rx<String?>(null);
   final Rx<String?> selectedBrandId = Rx<String?>(null);
   final Rx<String?> selectedCarModelId = Rx<String?>(null);
 
+  bool get isFilterActive =>
+      selectedCategoryId.value != null ||
+      selectedBrandId.value != null ||
+      selectedCarModelId.value != null;
+
+  String get activeFilterSummary {
+    final List<String> parts = [];
+    if (selectedBrandId.value != null && selectedBrandValueText != 'الكل') {
+      parts.add(selectedBrandValueText);
+    }
+    if (selectedCarModelId.value != null && selectedCarModelValueText != 'الكل') {
+      parts.add(selectedCarModelValueText);
+    }
+    if (selectedCategoryId.value != null && selectedCategoryValueText != 'الكل') {
+      parts.add(selectedCategoryValueText);
+    }
+    return parts.isEmpty ? 'كل القطع' : parts.join(' · ');
+  }
+
   @override
   void onInit() {
     super.onInit();
-    loadHomeData();
+    scrollController.addListener(_onScroll);
+    loadHomeData(refreshMetadata: true);
   }
 
-  Future<void> loadHomeData() async {
-    isLoading.value = true;
-    try {
-      final results = await Future.wait([
-        _productRepo.fetchCategories(),
-        _productRepo.fetchBrands(),
-        _productRepo.fetchCarModels(),
-        _productRepo.fetchBanners(),
-        _productRepo.fetchFeaturedProducts(),
-        _productRepo.fetchDeals(),
-        _productRepo.fetchBestSellers(),
-      ]);
+  @override
+  void onClose() {
+    scrollController.dispose();
+    super.onClose();
+  }
 
-      categories.assignAll(results[0] as List<CategoryModel>);
-      brands.assignAll(results[1] as List<BrandModel>);
-      carModels.assignAll(results[2] as List<CarModelModel>);
-      banners.assignAll(results[3] as List<BannerModel>);
-      featuredProducts.assignAll(results[4] as List<ProductModel>);
-      deals.assignAll(results[5] as List<ProductModel>);
-      bestSellers.assignAll(results[6] as List<ProductModel>);
+  void _onScroll() {
+    if (scrollController.hasClients) {
+      // Toggle scroll to top button
+      final shouldShow = scrollController.position.pixels > 500;
+      if (showScrollToTop.value != shouldShow) {
+        showScrollToTop.value = shouldShow;
+      }
+
+      // Infinite scroll load more
+      if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 400) {
+        if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
+          loadMoreProducts();
+        }
+      }
+    }
+  }
+
+  void scrollToTop() {
+    if (scrollController.hasClients) {
+      scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  Future<void> loadHomeData({bool refreshMetadata = false}) async {
+    isLoading.value = true;
+    _offset = 0;
+    hasMore.value = true;
+    try {
+      if (categories.isEmpty || refreshMetadata) {
+        final metaResults = await Future.wait([
+          _productRepo.fetchCategories(),
+          _productRepo.fetchBrands(),
+          _productRepo.fetchCarModels(),
+          _productRepo.fetchBanners(),
+        ]);
+        categories.assignAll(metaResults[0] as List<CategoryModel>);
+        brands.assignAll(metaResults[1] as List<BrandModel>);
+        carModels.assignAll(metaResults[2] as List<CarModelModel>);
+        banners.assignAll(metaResults[3] as List<BannerModel>);
+      }
+
+      if (!isFilterActive) {
+        final promoResults = await Future.wait([
+          _productRepo.fetchFeaturedProducts(),
+          _productRepo.fetchDeals(),
+          _productRepo.fetchBestSellers(),
+        ]);
+        featuredProducts.assignAll(promoResults[0]);
+        deals.assignAll(promoResults[1]);
+        bestSellers.assignAll(promoResults[2]);
+      }
+
+      final queryRes = await _productRepo.fetchProducts(
+        categoryId: selectedCategoryId.value,
+        brandId: selectedBrandId.value,
+        carModelId: selectedCarModelId.value,
+        offset: 0,
+        limit: _pageSize,
+      );
+
+      allProducts.assignAll(queryRes.products);
+      totalProductsCount.value = queryRes.totalCount;
+      _offset = queryRes.products.length;
+      hasMore.value = allProducts.length < totalProductsCount.value;
     } catch (_) {
     } finally {
       isLoading.value = false;
+    }
+  }
+
+  Future<void> loadMoreProducts() async {
+    if (isLoadingMore.value || !hasMore.value) return;
+    try {
+      isLoadingMore.value = true;
+      final res = await _productRepo.fetchProducts(
+        categoryId: selectedCategoryId.value,
+        brandId: selectedBrandId.value,
+        carModelId: selectedCarModelId.value,
+        offset: _offset,
+        limit: _pageSize,
+      );
+      allProducts.addAll(res.products);
+      totalProductsCount.value = res.totalCount;
+      _offset += res.products.length;
+      hasMore.value = allProducts.length < totalProductsCount.value;
+    } catch (_) {
+    } finally {
+      isLoadingMore.value = false;
     }
   }
 
@@ -126,7 +232,6 @@ class HomeController extends GetxController {
   }
 
   void applyFilters() {
-    // If any filter is active, fetch filtered products for featured/best-sellers
     loadHomeData();
   }
 }

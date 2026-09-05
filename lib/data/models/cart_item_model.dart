@@ -19,8 +19,10 @@ class CartItemModel {
     this.product,
   });
 
-  // Pair (تخم) costs 2x the single unit price
-  double get unitPrice => (side == 'PAIR') ? ((product?.priceIqd ?? 0.0) * 2) : (product?.priceIqd ?? 0.0);
+  // Pair (تخم) costs 2x the single unit price only if product supports side options
+  double get unitPrice => (side == 'PAIR' && (product?.hasSideOptions ?? true))
+      ? ((product?.priceIqd ?? 0.0) * 2)
+      : (product?.priceIqd ?? 0.0);
   double get totalPrice => unitPrice * quantity;
 
   CartItemModel copyWith({

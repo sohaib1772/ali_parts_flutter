@@ -254,24 +254,30 @@ class _LoginViewState extends State<LoginView> {
                                       height: 22,
                                       child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.gold),
                                     )
-                                  : Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        // Google G Logo
-                                        SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CustomPaint(painter: _GoogleLogoPainter()),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        const Text(
-                                          'المتابعة مع Google',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
+                                  : FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // Google G Logo
+                                          SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CustomPaint(painter: _GoogleLogoPainter()),
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(width: 12),
+                                          const Text(
+                                            'المتابعة مع Google',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'Cairo',
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                             ),
                           ),
@@ -300,19 +306,25 @@ class _LoginViewState extends State<LoginView> {
                                       height: 22,
                                       child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                                     )
-                                  : const Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.apple_rounded, color: Colors.white, size: 22),
-                                        SizedBox(width: 12),
-                                        Text(
-                                          'المتابعة مع Apple',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
+                                  : const FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.apple_rounded, color: Colors.white, size: 22),
+                                          SizedBox(width: 12),
+                                          Text(
+                                            'المتابعة مع Apple',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'Cairo',
+                                              height: 1.2,
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
                             ),
                           ),

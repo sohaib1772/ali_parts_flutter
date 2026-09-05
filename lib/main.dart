@@ -1,3 +1,5 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -13,8 +15,20 @@ import 'core/services/secure_storage_service.dart';
 import 'core/services/storage_service.dart';
 import 'core/services/auth_service.dart';
 
+/// Top-level FCM background message handler.
+/// Must be a top-level function (not a method).
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  // Background push notifications are shown automatically by the OS.
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase — must be first
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   // Orientations
   await SystemChrome.setPreferredOrientations([
@@ -74,6 +88,8 @@ class AliPartsApp extends StatelessWidget {
         initialBinding: InitialBinding(),
         initialRoute: AppRoutes.splash,
         getPages: AppPages.routes,
+        defaultTransition: Transition.fade,
+        transitionDuration: const Duration(milliseconds: 240),
         onUnknownRoute: (settings) => MaterialPageRoute(
           builder: (_) => const SizedBox.shrink(),
         ),
@@ -81,9 +97,15 @@ class AliPartsApp extends StatelessWidget {
         locale: const Locale('ar', 'IQ'),
         fallbackLocale: const Locale('ar', 'IQ'),
         builder: (context, child) {
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: child ?? const SizedBox.shrink(),
+          final mediaQuery = MediaQuery.of(context);
+          return MediaQuery(
+            data: mediaQuery.copyWith(
+              textScaler: mediaQuery.textScaler.clamp(minScaleFactor: 0.85, maxScaleFactor: 1.15),
+            ),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: child ?? const SizedBox.shrink(),
+            ),
           );
         },
       ),

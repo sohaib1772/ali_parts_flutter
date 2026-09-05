@@ -6,6 +6,7 @@ import '../../core/services/secure_storage_service.dart';
 import '../../core/services/settings_service.dart';
 import '../../data/repositories/order_repository.dart';
 import '../../data/repositories/product_repository.dart';
+import '../../data/repositories/replacement_repository.dart';
 
 class InitialBinding extends Bindings {
   @override
@@ -29,5 +30,6 @@ class InitialBinding extends Bindings {
     // Repositories
     Get.put<ProductRepository>(ProductRepository(dioClient), permanent: true);
     Get.put<OrderRepository>(OrderRepository(dioClient), permanent: true);
+    Get.put<ReplacementRepository>(ReplacementRepository(dioClient), permanent: true);
   }
 }

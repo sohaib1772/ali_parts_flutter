@@ -14,6 +14,7 @@ import '../../data/models/user_model.dart';
 import '../utils/app_logger.dart';
 import 'cart_service.dart';
 import 'favorites_service.dart';
+import 'notification_service.dart';
 import 'secure_storage_service.dart';
 
 class AuthService extends GetxService {
@@ -183,6 +184,11 @@ class AuthService extends GetxService {
 
       if (response.statusCode == 200 && response.data != null) {
         await _saveSession(response.data as Map<String, dynamic>);
+        // Update Realtime auth with new token
+        final newToken = await _secureStorage.read(AppConstants.secureKeyAccessToken);
+        if (newToken != null && Get.isRegistered<NotificationService>()) {
+          Get.find<NotificationService>().updateRealtimeAuth(newToken);
+        }
         return true;
       }
     } catch (e) {
@@ -418,6 +424,33 @@ class AuthService extends GetxService {
     return false;
   }
 
+  Future<bool> updateAvatar(String newAvatarUrl) async {
+    final userId = await _secureStorage.read(AppConstants.secureKeyUserId);
+    final token = await _secureStorage.read(AppConstants.secureKeyAccessToken);
+    if (userId == null || token == null) return false;
+
+    try {
+      final res = await _authDio.patch(
+        '/rest/v1/profiles',
+        queryParameters: {'id': 'eq.$userId'},
+        data: {'avatar_url': newAvatarUrl.trim()},
+        options: Options(headers: {
+          'Authorization': 'Bearer $token',
+          'apikey': ApiConstants.anonKey,
+        }),
+      );
+
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        userAvatar.value = newAvatarUrl.trim();
+        currentUser.value = currentUser.value?.copyWith(avatarUrl: newAvatarUrl.trim());
+        return true;
+      }
+    } catch (e) {
+      AppLogger.e('Error updating avatar', e);
+    }
+    return false;
+  }
+
   void syncServices() {
     final userId = currentUser.value?.id;
     if (userId != null && userId.isNotEmpty) {
@@ -426,6 +459,10 @@ class AuthService extends GetxService {
       }
       if (Get.isRegistered<FavoritesService>()) {
         Get.find<FavoritesService>().syncWithServer(userId);
+      }
+      // Start realtime notifications & FCM
+      if (Get.isRegistered<NotificationService>()) {
+        Get.find<NotificationService>().startListening(userId);
       }
     }
   }
@@ -445,6 +482,11 @@ class AuthService extends GetxService {
   }
 
   Future<void> _clearSession() async {
+    // Stop realtime & FCM
+    if (Get.isRegistered<NotificationService>()) {
+      await Get.find<NotificationService>().stopListening();
+    }
+
     await _secureStorage.deleteAll();
     isLoggedIn.value = false;
     currentUser.value = null;

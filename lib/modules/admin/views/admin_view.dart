@@ -1,10 +1,18 @@
+import 'dart:io';
+import 'dart:ui' as ui;
 import '../../../core/widgets/app_header_widget.dart';
+import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../app/config/api_constants.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/network/dio_client.dart';
@@ -15,6 +23,7 @@ import '../../../data/models/car_model_model.dart';
 import '../../../data/models/category_model.dart';
 import '../../../data/models/product_model.dart';
 import '../../../data/repositories/product_repository.dart';
+import '../../home/controllers/home_controller.dart';
 
 class AdminView extends StatefulWidget {
   const AdminView({super.key});
@@ -29,7 +38,6 @@ class _AdminViewState extends State<AdminView> {
 
   int _selectedTab = 0; // 0: Products, 1: Orders, 2: Categories, 3: Banners, 4: Stock Movements, 5: Block Log, 6: Users, 10: Settings, 11: Broadcast
   bool _showPermissions = false;
-  bool _showScrollToTop = false;
 
   // Products state
   List<ProductModel> _products = [];
@@ -40,12 +48,23 @@ class _AdminViewState extends State<AdminView> {
   // Orders state
   List<Map<String, dynamic>> _orders = [];
   bool _isLoadingOrders = false;
+  String _orderRange = '24h'; // '24h' | '7d' | 'all'
+  String _orderStatusFilter = 'all'; // 'all' | 'received' | 'preparing' | 'packed' | 'shipped_group' | 'delivered' | 'cancelled'
+  final Map<String, Map<String, dynamic>> _orderCustomerProfiles = {};
+  final Map<String, List<Map<String, dynamic>>> _orderItemsMap = {};
+  final Set<String> _expandedOrderIds = {};
+  String? _updatingOrderStatusId;
+  String? _togglingBlockUserId;
 
   // Categories, Brands, CarModels state
   List<CategoryModel> _categories = [];
   List<BrandModel> _brands = [];
   List<CarModelModel> _carModels = [];
   bool _isLoadingCategories = false;
+
+  // Banners / Offers state
+  List<Map<String, dynamic>> _banners = [];
+  bool _isLoadingBanners = false;
 
   // Stock Movements state
   List<Map<String, dynamic>> _stockMovements = [];
@@ -101,7 +120,6 @@ class _AdminViewState extends State<AdminView> {
   final TextEditingController _apiBaseUrlCtrl = TextEditingController(text: 'https://api.example.com/v1');
   final TextEditingController _apiKeyHeaderCtrl = TextEditingController(text: 'Authorization');
   final TextEditingController _apiKeyCtrl = TextEditingController();
-  bool _showApiKey = false;
 
   // Settings Images state
   String _storeLogoUrl = '';
@@ -136,9 +154,9 @@ class _AdminViewState extends State<AdminView> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     _loadProducts();
     _loadMetadata();
+    _loadBanners();
     _initSettings();
   }
 
@@ -174,21 +192,6 @@ class _AdminViewState extends State<AdminView> {
     _broadcastTitleCtrl.dispose();
     _broadcastBodyCtrl.dispose();
     super.dispose();
-  }
-
-  void _onScroll() {
-    final shouldShow = _scrollController.offset > 250;
-    if (shouldShow != _showScrollToTop) {
-      setState(() => _showScrollToTop = shouldShow);
-    }
-  }
-
-  void _scrollToTop() {
-    _scrollController.animateTo(
-      0,
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOutCubic,
-    );
   }
 
   Future<void> _initSettings() async {
@@ -296,16 +299,76 @@ class _AdminViewState extends State<AdminView> {
       final res = await dio.get(
         ApiConstants.orders,
         queryParameters: {
-          'select': '*',
+          'select': '*,order_items(*)',
           'order': 'created_at.desc',
-          'limit': 40,
+          'limit': 100,
         },
       );
 
       if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
+        final list = List<Map<String, dynamic>>.from(res.data as List);
+        final userIds = <String>{};
+        final orderIdsWithoutItems = <String>[];
+
+        for (final o in list) {
+          final uid = o['user_id'] as String?;
+          final oid = o['id'] as String?;
+          if (uid != null && uid.isNotEmpty) userIds.add(uid);
+
+          if (o['order_items'] is List && (o['order_items'] as List).isNotEmpty) {
+            _orderItemsMap[oid ?? ''] = List<Map<String, dynamic>>.from(o['order_items'] as List);
+          } else if (oid != null) {
+            orderIdsWithoutItems.add(oid);
+          }
+        }
+
+        // Fallback: fetch items separately if nested relation wasn't returned
+        if (orderIdsWithoutItems.isNotEmpty) {
+          try {
+            final itemsRes = await dio.get(
+              '/rest/v1/order_items',
+              queryParameters: {
+                'select': '*',
+                'order_id': 'in.(${orderIdsWithoutItems.join(",")})',
+              },
+            );
+            if (itemsRes.data is List) {
+              for (final it in itemsRes.data as List) {
+                final oMap = Map<String, dynamic>.from(it as Map);
+                final oid = oMap['order_id'] as String? ?? '';
+                if (!_orderItemsMap.containsKey(oid)) {
+                  _orderItemsMap[oid] = [];
+                }
+                _orderItemsMap[oid]!.add(oMap);
+              }
+            }
+          } catch (_) {}
+        }
+
+        // Fetch customer profiles
+        if (userIds.isNotEmpty) {
+          try {
+            final pRes = await dio.get(
+              '/rest/v1/profiles',
+              queryParameters: {
+                'select': 'id,full_name,phone,is_blocked,avatar_url',
+                'id': 'in.(${userIds.join(",")})',
+              },
+            );
+            if (pRes.data is List) {
+              for (final p in pRes.data as List) {
+                final id = p['id'] as String?;
+                if (id != null) {
+                  _orderCustomerProfiles[id] = Map<String, dynamic>.from(p as Map);
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
         if (mounted) {
           setState(() {
-            _orders = List<Map<String, dynamic>>.from(res.data as List);
+            _orders = list;
             _isLoadingOrders = false;
           });
         }
@@ -1000,6 +1063,25 @@ class _AdminViewState extends State<AdminView> {
     }
   }
 
+  Future<String?> _uploadSingleVideo(XFile? file, Uint8List? bytes) async {
+    if (file == null || bytes == null) return null;
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final ext = file.name.split('.').last.toLowerCase();
+      final safeExt = ext.isEmpty ? 'mp4' : ext;
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}';
+
+      await dio.post(
+        '/storage/v1/object/product-images/$fileName',
+        data: bytes,
+        options: Options(headers: {'Content-Type': 'video/$safeExt'}),
+      );
+      return '${ApiConstants.baseUrl}/storage/v1/object/public/product-images/$fileName';
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _saveSettings() async {
     setState(() => _isSavingSettings = true);
     try {
@@ -1142,6 +1224,83 @@ class _AdminViewState extends State<AdminView> {
                 Get.snackbar('تم', 'تم حذف التصنيف بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
               } catch (_) {
                 Get.snackbar('خطأ', 'تعذر حذف التصنيف', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddEditBrandDialog({BrandModel? brand}) {
+    Get.dialog(
+      BrandFormDialog(
+        brand: brand,
+        onSuccess: () => _loadMetadata(),
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  void _deleteBrand(BrandModel brand) {
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('حذف الماركة', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+        content: Text('هل أنت متأكد من حذف ماركة "${brand.nameAr}"؟'),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                await dio.delete(ApiConstants.brands, queryParameters: {'id': 'eq.${brand.id}'});
+                _loadMetadata();
+                Get.snackbar('تم', 'تم حذف الماركة بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر حذف الماركة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddEditCarModelDialog({CarModelModel? model}) {
+    Get.dialog(
+      CarModelFormDialog(
+        model: model,
+        brands: _brands,
+        onSuccess: () => _loadMetadata(),
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  void _deleteCarModel(CarModelModel model) {
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('حذف نوع السيارة', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+        content: Text('هل أنت متأكد من حذف "${model.nameAr}"؟'),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                await dio.delete(ApiConstants.carModels, queryParameters: {'id': 'eq.${model.id}'});
+                _loadMetadata();
+                Get.snackbar('تم', 'تم حذف نوع السيارة بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر حذف نوع السيارة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
@@ -1328,15 +1487,6 @@ class _AdminViewState extends State<AdminView> {
       ),
       child: Scaffold(
         backgroundColor: AppColors.navyDark, // Dark navy matches top header on iPhone notch/status bar
-        floatingActionButton: _showScrollToTop
-            ? FloatingActionButton.small(
-                onPressed: _scrollToTop,
-                backgroundColor: AppColors.gold,
-                foregroundColor: const Color(0xFF0F172A),
-                elevation: 4,
-                child: const Icon(Icons.arrow_upward_rounded, size: 20),
-              )
-            : null,
         body: SafeArea(
           bottom: false,
           child: Container(
@@ -1350,11 +1500,13 @@ class _AdminViewState extends State<AdminView> {
                 ),
 
                 // Single outer scrollable ListView for the whole page!
-              Expanded(
-                child: ListView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      ListView(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(0, 10, 0, 90),
+                        children: [
                     // 1. Subheader Accordion: صلاحياتي (5 مفعلة)
                     Container(
                       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -1396,7 +1548,7 @@ class _AdminViewState extends State<AdminView> {
                                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
                                       ),
                                       SizedBox(width: 8),
-                                      Icon(Icons.verified_user_outlined, color: Color(0xFF0D9488), size: 20),
+                                      Icon(IconsaxPlusBold.security_safe, color: Color(0xFF0D9488), size: 20),
                                     ],
                                   ),
                                 ],
@@ -1445,18 +1597,18 @@ class _AdminViewState extends State<AdminView> {
                         mainAxisSpacing: 6,
                         childAspectRatio: 1.1,
                         children: [
-                          _buildTabButton(0, Icons.inventory_2_outlined, 'منتجات'),
-                          _buildTabButton(3, Icons.photo_library_outlined, 'عروض'),
-                          _buildTabButton(2, Icons.local_offer_outlined, 'تصنيفات'),
-                          _buildTabButton(1, Icons.assignment_outlined, 'طلبات'),
-                          _buildTabButton(7, Icons.sync_alt_rounded, 'استبدال'),
-                          _buildTabButton(6, Icons.group_outlined, 'مستخدمون'),
-                          _buildTabButton(5, Icons.history_rounded, 'سجل الحظر'),
-                          _buildTabButton(4, Icons.widgets_outlined, 'سجل المخزون'),
-                          _buildTabButton(11, Icons.campaign_outlined, 'إشعار جماعي'),
-                          _buildTabButton(10, Icons.settings_outlined, 'إعدادات'),
-                          _buildTabButton(9, Icons.show_chart_rounded, 'تشخيص'),
-                          _buildTabButton(8, Icons.vpn_key_outlined, 'سجل OTP'),
+                          _buildTabButton(0, IconsaxPlusBold.box, IconsaxPlusLinear.box, 'منتجات'),
+                          _buildTabButton(3, IconsaxPlusBold.gallery, IconsaxPlusLinear.gallery, 'عروض'),
+                          _buildTabButton(2, IconsaxPlusBold.tag, IconsaxPlusLinear.tag, 'تصنيفات'),
+                          _buildTabButton(1, IconsaxPlusBold.clipboard_text, IconsaxPlusLinear.clipboard_text, 'طلبات'),
+                          _buildTabButton(7, IconsaxPlusBold.convert, IconsaxPlusLinear.convert, 'استبدال'),
+                          _buildTabButton(6, IconsaxPlusBold.profile_2user, IconsaxPlusLinear.profile_2user, 'مستخدمون'),
+                          _buildTabButton(5, IconsaxPlusBold.user_remove, IconsaxPlusLinear.user_remove, 'سجل الحظر'),
+                          _buildTabButton(4, IconsaxPlusBold.archive_book, IconsaxPlusLinear.archive_book, 'سجل المخزون'),
+                          _buildTabButton(11, IconsaxPlusBold.notification_bing, IconsaxPlusLinear.notification_bing, 'إشعار جماعي'),
+                          _buildTabButton(10, IconsaxPlusBold.setting_2, IconsaxPlusLinear.setting_2, 'إعدادات'),
+                          _buildTabButton(9, IconsaxPlusBold.status_up, IconsaxPlusLinear.status_up, 'تشخيص'),
+                          _buildTabButton(8, IconsaxPlusBold.key, IconsaxPlusLinear.key, 'سجل OTP'),
                         ],
                       ),
                     ),
@@ -1469,13 +1621,22 @@ class _AdminViewState extends State<AdminView> {
                     const SizedBox(height: 30),
                   ],
                 ),
-              ),
-            ],
+
+                // Floating Glass Scroll To Top Button
+                GlassScrollToTopButton(
+                  scrollController: _scrollController,
+                  bottom: 20,
+                  left: 18,
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     ),
-  );
+  ),
+),
+);
 }
 
   Widget _buildPermissionPill(String title, Color textColor, Color bgColor, Color borderColor) {
@@ -1490,7 +1651,7 @@ class _AdminViewState extends State<AdminView> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.check_circle_rounded, color: textColor, size: 16),
+          Icon(IconsaxPlusBold.tick_circle, color: textColor, size: 16),
           const SizedBox(width: 6),
           Text(
             title,
@@ -1501,13 +1662,14 @@ class _AdminViewState extends State<AdminView> {
     );
   }
 
-  Widget _buildTabButton(int index, IconData icon, String label) {
+  Widget _buildTabButton(int index, IconData activeIcon, IconData inactiveIcon, String label) {
     final isSelected = _selectedTab == index;
     return InkWell(
       onTap: () {
         setState(() => _selectedTab = index);
         if (index == 1 && _orders.isEmpty) _loadOrders();
         if (index == 2 && _categories.isEmpty) _loadMetadata();
+        if (index == 3 && _banners.isEmpty) _loadBanners();
         if (index == 4 && _stockMovements.isEmpty) _loadStockMovements();
         if (index == 5 && _blockLogs.isEmpty) _loadBlockData();
         if (index == 6 && _users.isEmpty) _loadUsers();
@@ -1527,7 +1689,7 @@ class _AdminViewState extends State<AdminView> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              icon,
+              isSelected ? activeIcon : inactiveIcon,
               size: 20,
               color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
             ),
@@ -1540,6 +1702,7 @@ class _AdminViewState extends State<AdminView> {
                 fontSize: 10,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                 color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                fontFamily: 'Cairo',
               ),
             ),
           ],
@@ -2248,7 +2411,7 @@ class _AdminViewState extends State<AdminView> {
               ),
               ElevatedButton.icon(
                 onPressed: () => _showAddEditProductDialog(),
-                icon: const Icon(Icons.add, size: 16),
+                icon: const Icon(IconsaxPlusBold.add, size: 16),
                 label: const Text('إضافة منتج', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF0A192F),
@@ -2268,10 +2431,10 @@ class _AdminViewState extends State<AdminView> {
             decoration: InputDecoration(
               hintText: 'OEM... ابحث بالاسم أو رقم',
               hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-              prefixIcon: const Icon(Icons.search, color: Color(0xFF94A3B8), size: 20),
+              prefixIcon: const Icon(IconsaxPlusLinear.search_normal_1, color: Color(0xFF94A3B8), size: 18),
               suffixIcon: _searchCtrl.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, size: 18),
+                      icon: const Icon(IconsaxPlusBold.close_circle, size: 18),
                       onPressed: () {
                         _searchCtrl.clear();
                         _loadProducts();
@@ -2392,7 +2555,7 @@ class _AdminViewState extends State<AdminView> {
                           borderRadius: BorderRadius.circular(8),
                           child: const Padding(
                             padding: EdgeInsets.all(6),
-                            child: Icon(Icons.edit_outlined, color: Color(0xFF0F172A), size: 19),
+                            child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -2401,7 +2564,7 @@ class _AdminViewState extends State<AdminView> {
                           borderRadius: BorderRadius.circular(8),
                           child: const Padding(
                             padding: EdgeInsets.all(6),
-                            child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 19),
+                            child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
                           ),
                         ),
                       ],
@@ -2416,51 +2579,1606 @@ class _AdminViewState extends State<AdminView> {
   }
 
   Widget _buildOrdersTab() {
-    if (_isLoadingOrders) return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: CircularProgressIndicator(color: AppColors.gold)));
-    if (_orders.isEmpty) return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: Text('لا توجد طلبات بعد')));
+    if (_isLoadingOrders) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: CircularProgressIndicator(color: AppColors.gold)),
+      );
+    }
 
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+    if (_orders.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: Text('لا توجد طلبات بعد', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold))),
+      );
+    }
+
+    final now = DateTime.now();
+    final cutoff24 = now.subtract(const Duration(hours: 24));
+    final cutoff7 = now.subtract(const Duration(days: 7));
+
+    final count24 = _orders.where((o) {
+      final ca = o['created_at'];
+      if (ca == null) return false;
+      try {
+        return DateTime.parse(ca.toString()).toLocal().isAfter(cutoff24);
+      } catch (_) {
+        return false;
+      }
+    }).length;
+
+    final count7 = _orders.where((o) {
+      final ca = o['created_at'];
+      if (ca == null) return false;
+      try {
+        return DateTime.parse(ca.toString()).toLocal().isAfter(cutoff7);
+      } catch (_) {
+        return false;
+      }
+    }).length;
+
+    final sum24 = _orders.where((o) {
+      final ca = o['created_at'];
+      if (ca == null) return false;
+      try {
+        return DateTime.parse(ca.toString()).toLocal().isAfter(cutoff24);
+      } catch (_) {
+        return false;
+      }
+    }).fold<double>(0.0, (acc, o) => acc + ((o['total_iqd'] as num?)?.toDouble() ?? 0.0));
+
+    final timeFiltered = _orders.where((o) {
+      if (_orderRange == 'all') return true;
+      final ca = o['created_at'];
+      if (ca == null) return true;
+      try {
+        final dt = DateTime.parse(ca.toString()).toLocal();
+        if (_orderRange == '24h') return dt.isAfter(cutoff24);
+        if (_orderRange == '7d') return dt.isAfter(cutoff7);
+      } catch (_) {}
+      return true;
+    }).toList();
+
+    final filtered = timeFiltered.where((o) {
+      if (_orderStatusFilter == 'all') return true;
+      final st = (o['status'] as String? ?? 'received').toLowerCase();
+      if (_orderStatusFilter == 'shipped_group') {
+        return st == 'shipped' || st == 'out_for_delivery';
+      }
+      return st == _orderStatusFilter;
+    }).toList();
+
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _orders.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final o = _orders[index];
-        final orderNum = o['order_number'] as String? ?? 'ORD';
-        final status = o['status'] as String? ?? 'received';
-        final total = (o['total_iqd'] as num?)?.toDouble() ?? 0.0;
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 1. Stats Banner
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+                colors: [
+                  AppColors.gold.withValues(alpha: 0.14),
+                  Colors.white,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.45), width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.gold.withValues(alpha: 0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('آخر 24 ساعة', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                        const SizedBox(height: 3),
+                        Text(
+                          '$count24 طلب جديد',
+                          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: Color(0xFF0A192F)),
+                        ),
+                      ],
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('إجمالي', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                        const SizedBox(height: 3),
+                        Text(
+                          Formatters.formatIQD(sum24),
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Color(0xFF0A192F)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    _buildOrderFilterPill('24h', '24 ساعة ($count24)'),
+                    const SizedBox(width: 8),
+                    _buildOrderFilterPill('7d', '7 أيام ($count7)'),
+                    const SizedBox(width: 8),
+                    _buildOrderFilterPill('all', 'الكل (${_orders.length})'),
+                  ],
+                ),
+              ],
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+
+          const SizedBox(height: 12),
+
+          // Status Filter Bar (above the action row)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: Row(
+              children: [
+                _buildOrderStatusChip(
+                  key: 'all',
+                  label: 'الكل',
+                  count: timeFiltered.length,
+                  icon: IconsaxPlusBold.category,
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'received',
+                  label: 'جديد',
+                  count: timeFiltered.where((o) => (o['status'] ?? 'received') == 'received').length,
+                  icon: IconsaxPlusBold.box_add,
+                  activeColor: const Color(0xFF2563EB),
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'preparing',
+                  label: 'جاري التجهيز',
+                  count: timeFiltered.where((o) => o['status'] == 'preparing').length,
+                  icon: IconsaxPlusBold.setting_2,
+                  activeColor: const Color(0xFFD97706),
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'packed',
+                  label: 'تم التجهيز',
+                  count: timeFiltered.where((o) => o['status'] == 'packed').length,
+                  icon: IconsaxPlusBold.box,
+                  activeColor: const Color(0xFF7C3AED),
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'shipped_group',
+                  label: 'قيد التوصيل',
+                  count: timeFiltered.where((o) => o['status'] == 'shipped' || o['status'] == 'out_for_delivery').length,
+                  icon: IconsaxPlusBold.truck,
+                  activeColor: const Color(0xFF0284C7),
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'delivered',
+                  label: 'تم التسليم',
+                  count: timeFiltered.where((o) => o['status'] == 'delivered').length,
+                  icon: IconsaxPlusBold.tick_circle,
+                  activeColor: const Color(0xFF059669),
+                ),
+                const SizedBox(width: 8),
+                _buildOrderStatusChip(
+                  key: 'cancelled',
+                  label: 'ملغي',
+                  count: timeFiltered.where((o) => o['status'] == 'cancelled').length,
+                  icon: IconsaxPlusBold.close_circle,
+                  activeColor: const Color(0xFFDC2626),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // 2. Subheader Action Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${filtered.length} طلب معروض',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
+              ),
+              OutlinedButton.icon(
+                onPressed: _showDeleteAllOrdersDialog,
+                icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                label: const Text(
+                  'حذف جميع الطلبات',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFFECDD3)),
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // 3. Orders List
+          if (filtered.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              alignment: Alignment.center,
+              child: const Text('لا توجد طلبات تطابق هذا الفلتر', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+            )
+          else
+            ...filtered.map((o) => _buildOrderAdminCard(o)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderStatusChip({
+    required String key,
+    required String label,
+    required int count,
+    required IconData icon,
+    Color activeColor = AppColors.gold,
+  }) {
+    final isSelected = _orderStatusFilter == key;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _orderStatusFilter = key),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? (activeColor == AppColors.gold ? AppColors.gold : activeColor.withValues(alpha: 0.12))
+                : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected
+                  ? (activeColor == AppColors.gold ? AppColors.gold : activeColor)
+                  : const Color(0xFFE2E8F0),
+              width: isSelected ? 1.5 : 1.0,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: (activeColor == AppColors.gold ? AppColors.gold : activeColor).withValues(alpha: 0.2),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 15,
+                color: isSelected
+                    ? (activeColor == AppColors.gold ? const Color(0xFF0A192F) : activeColor)
+                    : const Color(0xFF64748B),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                  fontFamily: 'Cairo',
+                  color: isSelected
+                      ? (activeColor == AppColors.gold ? const Color(0xFF0A192F) : activeColor)
+                      : const Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (activeColor == AppColors.gold ? const Color(0xFF0A192F).withValues(alpha: 0.12) : activeColor.withValues(alpha: 0.2))
+                      : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'Cairo',
+                    color: isSelected
+                        ? (activeColor == AppColors.gold ? const Color(0xFF0A192F) : activeColor)
+                        : const Color(0xFF64748B),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderFilterPill(String key, String label) {
+    final isSelected = _orderRange == key;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _orderRange = key),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.gold : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? AppColors.gold : const Color(0xFFE2E8F0),
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: AppColors.gold.withValues(alpha: 0.25),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+              color: isSelected ? const Color(0xFF0A192F) : const Color(0xFF64748B),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderAdminCard(Map<String, dynamic> o) {
+    final orderId = o['id'] as String? ?? '';
+    final orderNum = o['order_number'] as String? ?? (orderId.length > 8 ? orderId.substring(0, 8) : orderId);
+    final status = o['status'] as String? ?? 'received';
+    final totalAmount = (o['total_iqd'] as num?)?.toDouble() ?? 0.0;
+    final userId = o['user_id'] as String? ?? '';
+    final profile = _orderCustomerProfiles[userId];
+    final items = _orderItemsMap[orderId] ?? [];
+    final adminReviewed = o['admin_reviewed'] == true;
+
+    // Address extraction
+    final dynamic rawAddr = o['address'];
+    final Map<String, dynamic> addr = rawAddr is Map<String, dynamic>
+        ? rawAddr
+        : (rawAddr is Map ? Map<String, dynamic>.from(rawAddr) : {});
+
+    final addrLabel = addr['label'] as String? ?? '—';
+    final addrName = addr['full_name'] as String? ?? (profile?['full_name'] as String? ?? '—');
+    final addrPhone = addr['phone'] as String? ?? (profile?['phone'] as String? ?? '—');
+    final addrCity = addr['city'] as String? ?? '—';
+    final addrArea = addr['area'] as String? ?? '—';
+    final addrStreet = addr['street'] as String? ?? '—';
+    final addrNotes = addr['notes'] as String? ?? '—';
+
+    // Customer display
+    final customerName = (profile?['full_name'] as String?)?.trim().isNotEmpty == true
+        ? (profile!['full_name'] as String)
+        : (addrName != '—' ? addrName : 'زبون شوفرليت');
+    final customerPhone = (profile?['phone'] as String?)?.trim().isNotEmpty == true
+        ? (profile!['phone'] as String)
+        : (addrPhone != '—' ? addrPhone : '');
+    final isBlocked = profile?['is_blocked'] == true;
+    final phoneForCall = customerPhone.isNotEmpty ? customerPhone : addrPhone;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Top Row: #103 + Status Pill + Reviewed Tag
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('طلب #$orderNum', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(8),
+                  Text(
+                    '#$orderNum',
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13.5,
+                      color: Color(0xFF64748B),
                     ),
-                    child: Text(status, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
+                  ),
+                  if (adminReviewed) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFECFDF5),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFA7F3D0)),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle_rounded, size: 12, color: Color(0xFF047857)),
+                          SizedBox(width: 3),
+                          Text('تمت المراجعة', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _orderStatusBgColor(status),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _orderStatusBorderColor(status)),
+                ),
+                child: Text(
+                  _orderStatusLabel(status),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                    color: _orderStatusTextColor(status),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Customer Profile Row
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFD97706),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  (customerName.isNotEmpty ? customerName[0] : 'U').toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            customerName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14.5, color: Color(0xFF0F172A)),
+                          ),
+                        ),
+                        if (isBlocked) ...[
+                          const SizedBox(width: 6),
+                          const Icon(Icons.block_rounded, size: 16, color: Color(0xFFDC2626)),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      customerPhone.isNotEmpty ? customerPhone : '—',
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Color(0xFF64748B)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          // Delivery Address Section ("تفاصيل عنوان التوصيل")
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.location_on_outlined, color: AppColors.gold, size: 16),
+                    SizedBox(width: 6),
+                    Text('تفاصيل عنوان التوصيل', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: AppColors.gold)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _buildAddressRow('التسمية', addrLabel),
+                _buildAddressRow('الاسم الكامل', addrName),
+                _buildAddressRow('رقم الهاتف', addrPhone, isPhone: true),
+                _buildAddressRow('المحافظة', addrCity),
+                _buildAddressRow('المنطقة / القضاء', addrArea),
+                _buildAddressRow('الشارع / تفاصيل', addrStreet),
+                _buildAddressRow('ملاحظات إضافية', addrNotes),
+                const SizedBox(height: 10),
+                InkWell(
+                  onTap: () => _copyFullAddress(o, addr),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.copy_rounded, size: 15, color: Color(0xFF0F172A)),
+                        SizedBox(width: 8),
+                        Text(
+                          'نسخ العنوان كاملاً',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'Cairo',
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Order Items Section ("القطع (X)")
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Builder(
+              builder: (context) {
+                final isExpanded = _expandedOrderIds.contains(orderId);
+                final displayedItems = (items.length <= 3 || isExpanded)
+                    ? items
+                    : items.take(3).toList();
+                final remainingCount = items.length - 3;
+
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'القطع (${items.length})',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                          if (items.length > 3)
+                            InkWell(
+                              onTap: () {
+                                setState(() {
+                                  if (isExpanded) {
+                                    _expandedOrderIds.remove(orderId);
+                                  } else {
+                                    _expandedOrderIds.add(orderId);
+                                  }
+                                });
+                              },
+                              borderRadius: BorderRadius.circular(8),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      isExpanded
+                                          ? 'مشاهدة أقل'
+                                          : 'مشاهدة المزيد (+ $remainingCount)',
+                                      style: const TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.bold,
+                                        fontFamily: 'Cairo',
+                                        color: AppColors.gold,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                                      size: 16,
+                                      color: AppColors.gold,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ...displayedItems.map((item) => _buildOrderItemRow(item)),
+                      if (items.length > 3) ...[
+                        const SizedBox(height: 6),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (isExpanded) {
+                                _expandedOrderIds.remove(orderId);
+                              } else {
+                                _expandedOrderIds.add(orderId);
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  isExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                                  size: 17,
+                                  color: const Color(0xFF475569),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  isExpanded
+                                      ? 'عرض قطع أقل'
+                                      : 'مشاهدة المزيد (باقي $remainingCount قطع)',
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'Cairo',
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+
+          const SizedBox(height: 12),
+
+          // Call Button (Dark Navy)
+          if (phoneForCall.isNotEmpty && phoneForCall != '—')
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton.icon(
+                onPressed: () => _makePhoneCall(phoneForCall),
+                icon: const Icon(Icons.phone_in_talk_rounded, size: 18, color: Colors.white),
+                label: const Text('اتصال', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A192F),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 12),
+
+          // Total Amount
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('الإجمالي', style: TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+              Text(
+                Formatters.formatIQD(totalAmount),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0A192F)),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          // Status Dropdown
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: status,
+                isExpanded: true,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                items: [
+                  'received',
+                  'preparing',
+                  'packed',
+                  'shipped',
+                  'out_for_delivery',
+                  'delivered',
+                  'cancelled',
+                ].map((s) {
+                  final isSelected = s == status;
+                  return DropdownMenuItem(
+                    value: s,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isSelected ? const Color(0xFFD97706).withValues(alpha: 0.15) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _orderStatusLabel(s),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                              color: isSelected ? const Color(0xFFD97706) : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          if (isSelected) const Icon(Icons.check_rounded, size: 18, color: Color(0xFFD97706)),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+                onChanged: _updatingOrderStatusId == orderId
+                    ? null
+                    : (newStatus) {
+                        if (newStatus != null && newStatus != status) {
+                          _updateOrderStatus(orderId, newStatus);
+                        }
+                      },
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Preview Invoice Button (Gold)
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              onPressed: () => _showInvoicePreviewDialog(o, items),
+              icon: const Icon(Icons.receipt_long_rounded, size: 18, color: Colors.white),
+              label: const Text('معاينة الفاتورة', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD97706),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Ban Customer Button (Pink / Red)
+          if (userId.isNotEmpty)
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                onPressed: _togglingBlockUserId == userId ? null : () => _toggleBlockUser(userId, isBlocked),
+                icon: Icon(isBlocked ? Icons.lock_open_rounded : Icons.block_rounded, size: 18, color: const Color(0xFFDC2626)),
+                label: Text(
+                  isBlocked ? 'رفع الحظر عن الزبون' : 'حظر الزبون من الطلبات',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                ),
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFF1F2),
+                  side: const BorderSide(color: Color(0xFFFECDD3)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 10),
+
+          // Delete Single Order Button (Pink / Red)
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: () => _deleteSingleOrder(orderId),
+              icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFDC2626)),
+              label: const Text('حذف الطلب نهائياً', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFF1F2),
+                side: const BorderSide(color: Color(0xFFFECDD3)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddressRow(String label, String value, {bool isPhone = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.bold,
+                fontFamily: isPhone ? 'monospace' : null,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderItemRow(Map<String, dynamic> item) {
+    final name = item['name_ar'] as String? ?? 'قطعة غيار';
+    final img = item['image_url'] as String? ?? '';
+    final qty = item['quantity'] ?? 1;
+    final price = (item['unit_price_iqd'] as num?)?.toDouble() ?? 0.0;
+    final side = item['side'] as String?;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: img.isNotEmpty
+                ? CachedNetworkImage(
+                    imageUrl: img,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 20, color: Color(0xFF94A3B8))),
+                  )
+                : const Center(child: Icon(Icons.inventory_2_outlined, size: 20, color: Color(0xFF94A3B8))),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    if (side != null && side.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0A192F),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(side == 'pair' ? 'تخم' : side, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white)),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      '${Formatters.formatIQD(price)} × $qty',
+                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _orderStatusLabel(String s) {
+    switch (s) {
+      case 'received': return 'تم الاستلام';
+      case 'preparing': return 'جاري التجهيز';
+      case 'packed': return 'تم التغليف';
+      case 'shipped': return 'شحن للتوصيل';
+      case 'out_for_delivery': return 'خرج للتوصيل';
+      case 'delivered': return 'تم التسليم';
+      case 'cancelled': return 'ملغى';
+      default: return s;
+    }
+  }
+
+  Color _orderStatusBgColor(String s) {
+    switch (s) {
+      case 'received': return const Color(0xFFEFF6FF);
+      case 'preparing': return const Color(0xFFFEF3C7);
+      case 'packed': return const Color(0xFFF3E8FF);
+      case 'shipped': return const Color(0xFFE0F2FE);
+      case 'out_for_delivery': return const Color(0xFFFFFBEB);
+      case 'delivered': return const Color(0xFFECFDF5);
+      case 'cancelled': return const Color(0xFFFFF1F2);
+      default: return const Color(0xFFF1F5F9);
+    }
+  }
+
+  Color _orderStatusTextColor(String s) {
+    switch (s) {
+      case 'received': return const Color(0xFF1D4ED8);
+      case 'preparing': return const Color(0xFFD97706);
+      case 'packed': return const Color(0xFF7E22CE);
+      case 'shipped': return const Color(0xFF0369A1);
+      case 'out_for_delivery': return const Color(0xFFB45309);
+      case 'delivered': return const Color(0xFF047857);
+      case 'cancelled': return const Color(0xFFBE123C);
+      default: return const Color(0xFF64748B);
+    }
+  }
+
+  Color _orderStatusBorderColor(String s) {
+    switch (s) {
+      case 'received': return const Color(0xFFBFDBFE);
+      case 'preparing': return const Color(0xFFFDE68A);
+      case 'packed': return const Color(0xFFE9D5FF);
+      case 'shipped': return const Color(0xFFBAE6FD);
+      case 'out_for_delivery': return const Color(0xFFFDE68A);
+      case 'delivered': return const Color(0xFFA7F3D0);
+      case 'cancelled': return const Color(0xFFFECDD3);
+      default: return const Color(0xFFCBD5E1);
+    }
+  }
+
+  void _copyFullAddress(Map<String, dynamic> o, Map<String, dynamic> addr) {
+    final orderNum = o['order_number'] as String? ?? (o['id'] as String? ?? '').substring(0, 8);
+    final label = addr['label'] as String? ?? '—';
+    final name = addr['full_name'] as String? ?? '—';
+    final phone = addr['phone'] as String? ?? '—';
+    final city = addr['city'] as String? ?? '—';
+    final area = addr['area'] as String? ?? '—';
+    final street = addr['street'] as String? ?? '—';
+    final notes = addr['notes'] as String? ?? '—';
+
+    final text = '''
+تفاصيل عنوان التوصيل للطلب #$orderNum:
+- التسمية: $label
+- الاسم الكامل: $name
+- رقم الهاتف: $phone
+- المحافظة: $city
+- المنطقة / القضاء: $area
+- الشارع / تفاصيل: $street
+- ملاحظات إضافية: $notes
+''';
+
+    Clipboard.setData(ClipboardData(text: text));
+    Get.snackbar('تم النسخ', 'تم نسخ تفاصيل العنوان كاملاً إلى الحافظة', backgroundColor: const Color(0xFF0A192F), colorText: Colors.white);
+  }
+
+  void _makePhoneCall(String phone) async {
+    final clean = phone.replaceAll(RegExp(r'\s+'), '');
+    final uri = Uri.parse('tel:$clean');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      Get.snackbar('تنبيه', 'تعذر إجراء المكالمة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    }
+  }
+
+  Future<void> _updateOrderStatus(String id, String status) async {
+    setState(() => _updatingOrderStatusId = id);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      await dio.patch(
+        '/rest/v1/orders',
+        queryParameters: {'id': 'eq.$id'},
+        data: {'status': status},
+      );
+      Get.snackbar('تم التحديث', 'تم تغيير حالة الطلب بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+      _loadOrders();
+    } catch (_) {
+      Get.snackbar('خطأ', 'تعذر تحديث حالة الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    } finally {
+      if (mounted) setState(() => _updatingOrderStatusId = null);
+    }
+  }
+
+  void _deleteSingleOrder(String id) {
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('حذف الطلب', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+        content: const Text('سيتم حذف هذا الطلب بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.'),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                await dio.delete('/rest/v1/orders', queryParameters: {'id': 'eq.$id'});
+                Get.snackbar('تم الحذف', 'تم حذف الطلب بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                _loadOrders();
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر حذف الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteAllOrdersDialog() {
+    if (_orders.isEmpty) return;
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('حذف جميع الطلبات', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+        content: Text('سيتم حذف ${_orders.length} طلب بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.'),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                final ids = _orders.map((o) => o['id'] as String).toList();
+                await dio.delete('/rest/v1/orders', queryParameters: {'id': 'in.(${ids.join(",")})'});
+                Get.snackbar('تم الحذف', 'تم حذف جميع الطلبات بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                _loadOrders();
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر حذف الطلبات', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleBlockUser(String uid, bool isBlocked) async {
+    final next = !isBlocked;
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(next ? 'حظر الزبون' : 'رفع الحظر', style: TextStyle(fontWeight: FontWeight.bold, color: next ? const Color(0xFFDC2626) : const Color(0xFF047857))),
+        content: Text(next ? 'هل أنت متأكد من حظر هذا الزبون من إرسال الطلبات؟' : 'هل تريد رفع الحظر عن هذا الزبون؟'),
+        actions: [
+          TextButton(onPressed: () => Get.back(result: false), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () => Get.back(result: true),
+            style: ElevatedButton.styleFrom(backgroundColor: next ? const Color(0xFFDC2626) : const Color(0xFF047857), foregroundColor: Colors.white),
+            child: Text(next ? 'حظر الزبون' : 'رفع الحظر'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _togglingBlockUserId = uid);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      await dio.patch('/rest/v1/profiles', queryParameters: {'id': 'eq.$uid'}, data: {'is_blocked': next});
+      try {
+        await dio.post('/rest/v1/user_block_log', data: {'user_id': uid, 'action': next ? 'block' : 'unblock'});
+      } catch (_) {}
+
+      Get.snackbar('تم', next ? 'تم حظر الزبون بنجاح' : 'تم رفع الحظر بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+      _loadOrders();
+    } catch (_) {
+      Get.snackbar('خطأ', 'تعذر تحديث حالة الحظر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    } finally {
+      if (mounted) setState(() => _togglingBlockUserId = null);
+    }
+  }
+
+  Future<void> _shareInvoiceAsImage(GlobalKey key, String orderNum) async {
+    try {
+      final boundary = key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
+
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+
+      final pngBytes = byteData.buffer.asUint8List();
+      final tempDir = await getTemporaryDirectory();
+      final file = await File('${tempDir.path}/invoice_$orderNum.png').create();
+      await file.writeAsBytes(pngBytes);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'فاتورة طلب #$orderNum - ${_settings.storeName.isNotEmpty ? _settings.storeName : "مكتب علي شوفرليت وكاديلاك"}',
+      );
+    } catch (e) {
+      Get.snackbar('خطأ', 'تعذر مشاركة صورة الفاتورة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    }
+  }
+
+  void _showInvoicePreviewDialog(Map<String, dynamic> o, List<Map<String, dynamic>> items) {
+    final invoiceKey = GlobalKey();
+    final orderNum = o['order_number'] as String? ?? (o['id'] as String? ?? '').substring(0, 8);
+    final total = (o['total_iqd'] as num?)?.toDouble() ?? 0.0;
+    final shipping = ((o['shipping_iqd'] ?? o['shipping_fee_iqd'] ?? o['delivery_fee_iqd']) as num?)?.toDouble() ?? 0.0;
+    final pointsUsed = (o['points_used'] as num?)?.toInt() ?? 0;
+    bool isSharing = false;
+
+    double itemsSubtotal = 0.0;
+    for (final it in items) {
+      final iprice = (it['unit_price_iqd'] as num?)?.toDouble() ?? 0.0;
+      final iqty = (it['quantity'] as num?)?.toInt() ?? 1;
+      itemsSubtotal += iprice * iqty;
+    }
+    final subtotal = (o['subtotal_iqd'] as num?)?.toDouble() ?? (itemsSubtotal > 0 ? itemsSubtotal : (total - shipping > 0 ? total - shipping : total));
+
+    final dynamic rawAddr = o['address'];
+    final Map<String, dynamic> addr = rawAddr is Map<String, dynamic>
+        ? rawAddr
+        : (rawAddr is Map ? Map<String, dynamic>.from(rawAddr) : {});
+
+    final name = addr['full_name'] as String? ?? '—';
+    final phone = addr['phone'] as String? ?? '—';
+    final city = addr['city'] as String? ?? '—';
+    final area = addr['area'] as String? ?? '—';
+    final street = addr['street'] as String? ?? '—';
+    final fullAddrText = '$city، $area${street.isNotEmpty && street != "—" ? " - $street" : ""}';
+
+    Get.dialog(
+      StatefulBuilder(
+        builder: (context, setDlgState) {
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+              constraints: BoxConstraints(
+                maxWidth: 440,
+                maxHeight: MediaQuery.of(context).size.height * 0.88,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Text('الإجمالي: ${Formatters.formatIQD(total)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0D9488))),
-            ],
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Invoice Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: () => Get.back(),
+                        icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF64748B)),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                      const Text(
+                        'معاينة الفاتورة',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(width: 24),
+                    ],
+                  ),
+                  const Divider(height: 16),
+
+                  // Scrollable Printable / Snapshot Card (RepaintBoundary)
+                  Flexible(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: RepaintBoundary(
+                        key: invoiceKey,
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Store Branding
+                              Center(
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      width: 48,
+                                      height: 48,
+                                      decoration: const BoxDecoration(color: Color(0xFF0A192F), shape: BoxShape.circle),
+                                      child: const Icon(IconsaxPlusBold.car, color: AppColors.gold, size: 24),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _settings.storeName.isNotEmpty ? _settings.storeName : 'مكتب علي شوفرليت وكاديلاك',
+                                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, fontFamily: 'Cairo', color: Color(0xFF0A192F)),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    Text(
+                                      _settings.storeTagline.isNotEmpty ? _settings.storeTagline : 'قطع غيار أصلية ومضمونة',
+                                      style: const TextStyle(fontSize: 11, fontFamily: 'Cairo', color: Color(0xFF64748B)),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 14),
+
+                              // Order & Customer Info Card
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF8FAFC),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: Column(
+                                  children: [
+                                    _buildInvoiceRowItem('رقم الطلب', '#$orderNum', isMono: true),
+                                    const SizedBox(height: 5),
+                                    _buildInvoiceRowItem('الزبون', name),
+                                    const SizedBox(height: 5),
+                                    _buildInvoiceRowItem('الهاتف', phone, isMono: true),
+                                    const SizedBox(height: 5),
+                                    _buildInvoiceRowItem('العنوان', fullAddrText),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 14),
+
+                              // Itemized table header label
+                              const Text(
+                                'القطع المطلوبة',
+                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                              ),
+                              const SizedBox(height: 8),
+
+                              // Itemized structured table
+                              Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Table(
+                                  columnWidths: const {
+                                    0: FlexColumnWidth(4.4), // اسم القطعة
+                                    1: FlexColumnWidth(1.2), // العدد
+                                    2: FlexColumnWidth(2.8), // السعر
+                                  },
+                                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                                  children: [
+                                    // Table Header
+                                    const TableRow(
+                                      decoration: BoxDecoration(
+                                        color: Color(0xFFF1F5F9),
+                                      ),
+                                      children: [
+                                        Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                                          child: Text(
+                                            'القطعة',
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+                                          child: Text(
+                                            'العدد',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                                          child: Text(
+                                            'السعر',
+                                            textAlign: TextAlign.end,
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    // Table Rows
+                                    if (items.isEmpty)
+                                      const TableRow(
+                                        children: [
+                                          Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: Text(
+                                              'لا توجد تفاصيل قطع',
+                                              style: TextStyle(fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF94A3B8)),
+                                            ),
+                                          ),
+                                          SizedBox.shrink(),
+                                          SizedBox.shrink(),
+                                        ],
+                                      )
+                                    else
+                                      ...items.asMap().entries.map((entry) {
+                                        final idx = entry.key;
+                                        final it = entry.value;
+                                        final iname = it['name_ar'] as String? ?? 'قطعة';
+                                        final iside = it['side'] as String?;
+                                        final iprice = (it['unit_price_iqd'] as num?)?.toDouble() ?? 0.0;
+                                        final iqty = it['quantity'] ?? 1;
+                                        final sideLabel = iside == 'LH'
+                                            ? ' (يسار)'
+                                            : iside == 'RH'
+                                                ? ' (يمين)'
+                                                : iside == 'PAIR'
+                                                    ? ' (طقم)'
+                                                    : '';
+
+                                        return TableRow(
+                                          decoration: BoxDecoration(
+                                            color: idx.isOdd ? const Color(0xFFF8FAFC) : Colors.white,
+                                            border: const Border(
+                                              top: BorderSide(color: Color(0xFFE2E8F0), width: 0.8),
+                                            ),
+                                          ),
+                                          children: [
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                              child: Text(
+                                                '$iname$sideLabel',
+                                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, fontFamily: 'Cairo', color: Color(0xFF1E293B), height: 1.3),
+                                              ),
+                                            ),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                                              child: Text(
+                                                '$iqty',
+                                                textAlign: TextAlign.center,
+                                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                              ),
+                                            ),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                              child: Text(
+                                                Formatters.formatIQD(iprice * iqty),
+                                                textAlign: TextAlign.end,
+                                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      }),
+                                  ],
+                                ),
+                              ),
+
+                              const Divider(height: 20),
+
+                              // Financials
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('المجموع الفرعي', style: TextStyle(fontSize: 12, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                                  Text(Formatters.formatIQD(subtotal), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A))),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('كلفة التوصيل', style: TextStyle(fontSize: 12, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                                  Text(shipping > 0 ? Formatters.formatIQD(shipping) : 'مجاني', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A))),
+                                ],
+                              ),
+                              if (pointsUsed > 0) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('خصم نقاط ($pointsUsed)', style: const TextStyle(fontSize: 12, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                                    Text('- ${Formatters.formatIQD((subtotal + shipping) - total)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF047857))),
+                                  ],
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('الإجمالي النهائي', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontFamily: 'Cairo', color: Color(0xFF0A192F))),
+                                  Text(Formatters.formatIQD(total), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontFamily: 'Cairo', color: Color(0xFFD97706))),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Action Buttons Row: Share Image & Close
+                  Row(
+                    children: [
+                      // Share Image Button (Gold)
+                      Expanded(
+                        flex: 3,
+                        child: SizedBox(
+                          height: 44,
+                          child: ElevatedButton.icon(
+                            onPressed: isSharing
+                                ? null
+                                : () async {
+                                    setDlgState(() => isSharing = true);
+                                    await _shareInvoiceAsImage(invoiceKey, orderNum);
+                                    if (context.mounted) {
+                                      setDlgState(() => isSharing = false);
+                                    }
+                                  },
+                            icon: isSharing
+                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Icon(IconsaxPlusBold.share, size: 18, color: Colors.white),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'مشاركة كصورة',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'Cairo', color: Colors.white, height: 1.2),
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFD97706),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Close Button (Navy)
+                      Expanded(
+                        flex: 2,
+                        child: SizedBox(
+                          height: 44,
+                          child: ElevatedButton(
+                            onPressed: () => Get.back(),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0A192F),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                            child: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('إغلاق', style: TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo', height: 1.2)),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildInvoiceRowItem(String label, String value, {bool isMono = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 65,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
           ),
-        );
-      },
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              fontFamily: isMono ? 'monospace' : 'Cairo',
+              color: const Color(0xFF0F172A),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2477,6 +4195,7 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ─── 1. Categories Section ───
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -2486,7 +4205,7 @@ class _AdminViewState extends State<AdminView> {
               ),
               ElevatedButton.icon(
                 onPressed: () => _showAddEditCategoryDialog(),
-                icon: const Icon(Icons.add, size: 16),
+                icon: const Icon(IconsaxPlusBold.add, size: 16),
                 label: const Text('جديد', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF0A192F),
@@ -2498,144 +4217,897 @@ class _AdminViewState extends State<AdminView> {
             ],
           ),
           const SizedBox(height: 10),
-          ..._categories.map((c) {
-            final hasImage = c.imageUrl != null && c.imageUrl!.isNotEmpty;
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.02),
-                    blurRadius: 6,
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: hasImage
-                        ? CachedNetworkImage(
-                            imageUrl: c.imageUrl!,
-                            fit: BoxFit.cover,
-                            errorWidget: (_, __, ___) => const Center(
-                              child: Icon(Icons.category_outlined, color: Color(0xFFD97706), size: 24),
-                            ),
-                          )
-                        : const Center(
-                            child: Icon(Icons.category_outlined, color: Color(0xFFD97706), size: 24),
-                          ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      c.nameAr,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => _showAddEditCategoryDialog(category: c),
-                    borderRadius: BorderRadius.circular(8),
-                    child: const Padding(
-                      padding: EdgeInsets.all(6),
-                      child: Icon(Icons.edit_outlined, color: Color(0xFF0F172A), size: 19),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  InkWell(
-                    onTap: () => _deleteCategory(c),
-                    borderRadius: BorderRadius.circular(8),
-                    child: const Padding(
-                      padding: EdgeInsets.all(6),
-                      child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 19),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-          const SizedBox(height: 20),
-          const Text(
-            'الماركات',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-          ),
-          const SizedBox(height: 10),
-          ..._brands.map((b) {
-            final hasLogo = b.logoUrl != null && b.logoUrl!.isNotEmpty;
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
+          if (_categories.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(10),
+              alignment: Alignment.center,
+              child: const Text('لا توجد تصنيفات مسجلة', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+            )
+          else
+            ..._categories.map((c) {
+              final hasImage = c.imageUrl != null && c.imageUrl!.isNotEmpty;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.02),
+                      blurRadius: 6,
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: hasLogo
-                        ? CachedNetworkImage(
-                            imageUrl: b.logoUrl!,
-                            fit: BoxFit.cover,
-                            errorWidget: (_, __, ___) => const Center(
-                              child: Icon(Icons.directions_car_outlined, color: Color(0xFF0D9488), size: 24),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: hasImage
+                          ? CachedNetworkImage(
+                              imageUrl: c.imageUrl!,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => const Center(
+                                child: Icon(IconsaxPlusBold.tag, color: Color(0xFFD97706), size: 24),
+                              ),
+                            )
+                          : const Center(
+                              child: Icon(IconsaxPlusBold.tag, color: Color(0xFFD97706), size: 24),
                             ),
-                          )
-                        : const Center(
-                            child: Icon(Icons.directions_car_outlined, color: Color(0xFF0D9488), size: 24),
-                          ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      b.nameAr,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        c.nameAr,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _showAddEditCategoryDialog(category: c),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    InkWell(
+                      onTap: () => _deleteCategory(c),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+
+          const SizedBox(height: 24),
+
+          // ─── 2. Brands Section ───
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'الماركات',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
               ),
-            );
-          }),
+              ElevatedButton.icon(
+                onPressed: () => _showAddEditBrandDialog(),
+                icon: const Icon(IconsaxPlusBold.add, size: 16),
+                label: const Text('جديد', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A192F),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_brands.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              alignment: Alignment.center,
+              child: const Text('لا توجد ماركات مسجلة', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+            )
+          else
+            ..._brands.map((b) {
+              final hasLogo = b.logoUrl != null && b.logoUrl!.isNotEmpty;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.02),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: hasLogo
+                          ? CachedNetworkImage(
+                              imageUrl: b.logoUrl!,
+                              fit: BoxFit.contain,
+                              errorWidget: (_, __, ___) => const Center(
+                                child: Icon(IconsaxPlusBold.car, color: Color(0xFF0D9488), size: 24),
+                              ),
+                            )
+                          : const Center(
+                              child: Icon(IconsaxPlusBold.car, color: Color(0xFF0D9488), size: 24),
+                            ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        b.nameAr,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _showAddEditBrandDialog(brand: b),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    InkWell(
+                      onTap: () => _deleteBrand(b),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+
+          const SizedBox(height: 24),
+
+          // ─── 3. Car Models Section ───
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'أنواع وموديلات السيارات',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+              ),
+              ElevatedButton.icon(
+                onPressed: () => _showAddEditCarModelDialog(),
+                icon: const Icon(IconsaxPlusBold.add, size: 16),
+                label: const Text('جديد', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A192F),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_carModels.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              alignment: Alignment.center,
+              child: const Text('لا توجد أنواع سيارات مسجلة', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+            )
+          else
+            ..._carModels.map((m) {
+              final brand = _brands.where((b) => b.id == m.brandId).firstOrNull;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.02),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(IconsaxPlusBold.car, color: Color(0xFF0A192F), size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            m.nameAr,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                          ),
+                          if (brand != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              brand.nameAr,
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _showAddEditCarModelDialog(model: m),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    InkWell(
+                      onTap: () => _deleteCarModel(m),
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );
   }
 
-  Widget _buildBannersTab() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.photo_library_outlined, size: 48, color: Color(0xFF94A3B8)),
-            const SizedBox(height: 12),
-            const Text('إدارة البانرات والعروض الخاصة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-            const SizedBox(height: 6),
-            const Text('يمكنك رفع بنرات جديدة وتحديد العروض الترويجية النشطة.', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
-          ],
+  Future<void> _loadBanners() async {
+    setState(() => _isLoadingBanners = true);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final res = await dio.get('/rest/v1/banners', queryParameters: {'order': 'created_at.desc'});
+      if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
+        if (mounted) {
+          setState(() {
+            _banners = (res.data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            _isLoadingBanners = false;
+          });
+        }
+        return;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _isLoadingBanners = false);
+  }
+
+  void _showAddEditBannerDialog({Map<String, dynamic>? banner}) {
+    final isEdit = banner != null;
+    final titleCtrl = TextEditingController(text: banner?['title_ar'] ?? '');
+    final subtitleCtrl = TextEditingController(text: banner?['subtitle_ar'] ?? '');
+
+    String currentImageUrl = banner?['image_url'] as String? ?? '';
+    String currentVideoUrl = (banner?['video_url'] as String?) ?? '';
+
+    XFile? pickedImageFile;
+    Uint8List? pickedImageBytes;
+
+    XFile? pickedVideoFile;
+    Uint8List? pickedVideoBytes;
+    String? pickedVideoName;
+
+    bool isSaving = false;
+
+    Get.dialog(
+      Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: StatefulBuilder(
+            builder: (ctx, setDlgState) {
+              final hasImage = pickedImageBytes != null || currentImageUrl.isNotEmpty;
+              final hasVideo = pickedVideoFile != null || currentVideoUrl.isNotEmpty;
+
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Header
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          onPressed: () => Get.back(),
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                        Text(
+                          isEdit ? 'تعديل عرض' : 'إضافة عرض',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                        ),
+                        const SizedBox(width: 20),
+                      ],
+                    ),
+                    const Divider(height: 20),
+
+                    // 1. Image Upload
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'الصور',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                        ),
+                        if (hasImage)
+                          InkWell(
+                            onTap: () {
+                              setDlgState(() {
+                                pickedImageFile = null;
+                                pickedImageBytes = null;
+                                currentImageUrl = '';
+                              });
+                            },
+                            child: const Text('إزالة الصورة', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (hasImage)
+                      Center(
+                        child: Stack(
+                          children: [
+                            Container(
+                              width: 110,
+                              height: 110,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: pickedImageBytes != null
+                                  ? Image.memory(pickedImageBytes!, fit: BoxFit.cover)
+                                  : CachedNetworkImage(
+                                      imageUrl: currentImageUrl,
+                                      fit: BoxFit.cover,
+                                      placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
+                                      errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey)),
+                                    ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setDlgState(() {
+                                    pickedImageFile = null;
+                                    pickedImageBytes = null;
+                                    currentImageUrl = '';
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFDC2626),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.delete_outline_rounded, color: Colors.white, size: 14),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      InkWell(
+                        onTap: () async {
+                          final picker = ImagePicker();
+                          final img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+                          if (img != null) {
+                            final bytes = await img.readAsBytes();
+                            setDlgState(() {
+                              pickedImageFile = img;
+                              pickedImageBytes = bytes;
+                            });
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          height: 90,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.file_upload_outlined, size: 26, color: Color(0xFF64748B)),
+                              SizedBox(height: 4),
+                              Text('رفع صورة', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                    const SizedBox(height: 16),
+
+                    // 2. Video Upload (Optional)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'فيديو (اختياري)',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                        ),
+                        if (hasVideo)
+                          InkWell(
+                            onTap: () {
+                              setDlgState(() {
+                                pickedVideoFile = null;
+                                pickedVideoBytes = null;
+                                pickedVideoName = null;
+                                currentVideoUrl = '';
+                              });
+                            },
+                            child: const Text('إزالة الفيديو', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (hasVideo)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.videocam_rounded, color: AppColors.gold, size: 24),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                pickedVideoName ?? (currentVideoUrl.isNotEmpty ? 'فيديو مرفوع' : 'فيديو محدد'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () {
+                                setDlgState(() {
+                                  pickedVideoFile = null;
+                                  pickedVideoBytes = null;
+                                  pickedVideoName = null;
+                                  currentVideoUrl = '';
+                                });
+                              },
+                              icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 18),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      InkWell(
+                        onTap: () async {
+                          final picker = ImagePicker();
+                          final vid = await picker.pickVideo(source: ImageSource.gallery);
+                          if (vid != null) {
+                            final bytes = await vid.readAsBytes();
+                            if (bytes.lengthInBytes > 35 * 1024 * 1024) {
+                              Get.snackbar('حجم الفيديو كبير', 'يرجى اختيار فيديو بحجم أقل من 35 ميغابايت', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                              return;
+                            }
+                            setDlgState(() {
+                              pickedVideoFile = vid;
+                              pickedVideoBytes = bytes;
+                              pickedVideoName = vid.name;
+                            });
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          height: 80,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.upload_rounded, size: 24, color: Color(0xFF64748B)),
+                              SizedBox(height: 4),
+                              Text('رفع فيديو', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'عند وجود فيديو سيعرض بدل الصورة، والصورة تُستخدم كصورة أولية.',
+                      style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // 3. Title Input
+                    const Text('العنوان', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A))),
+                    const SizedBox(height: 6),
+                    _buildSettingInput(titleCtrl, placeholder: ''),
+
+                    const SizedBox(height: 12),
+
+                    // 4. Subtitle Input
+                    const Text('العنوان الفرعي', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A))),
+                    const SizedBox(height: 6),
+                    _buildSettingInput(subtitleCtrl, placeholder: ''),
+
+                    const SizedBox(height: 20),
+
+                    // Save Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 46,
+                      child: ElevatedButton(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                if (currentImageUrl.isEmpty && pickedImageBytes == null && currentVideoUrl.isEmpty && pickedVideoBytes == null) {
+                                  Get.snackbar('تنبيه', 'الصورة أو الفيديو مطلوب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                  return;
+                                }
+
+                                if ((currentVideoUrl.isNotEmpty || pickedVideoBytes != null) && currentImageUrl.isEmpty && pickedImageBytes == null) {
+                                  Get.snackbar('تنبيه', 'صورة الغلاف مطلوبة مع الفيديو', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                  return;
+                                }
+
+                                setDlgState(() => isSaving = true);
+                                try {
+                                  final dio = Get.find<DioClient>().dio;
+
+                                  // 1. Upload image if newly picked
+                                  if (pickedImageFile != null && pickedImageBytes != null) {
+                                    final upImg = await _uploadSingleImage(pickedImageFile, pickedImageBytes);
+                                    if (upImg != null) currentImageUrl = upImg;
+                                  }
+
+                                  // 2. Upload video if newly picked
+                                  if (pickedVideoFile != null && pickedVideoBytes != null) {
+                                    final upVid = await _uploadSingleVideo(pickedVideoFile, pickedVideoBytes);
+                                    if (upVid != null) currentVideoUrl = upVid;
+                                  }
+
+                                  final payload = {
+                                    'title_ar': titleCtrl.text.trim().isNotEmpty ? titleCtrl.text.trim() : null,
+                                    'subtitle_ar': subtitleCtrl.text.trim().isNotEmpty ? subtitleCtrl.text.trim() : null,
+                                    'image_url': currentImageUrl,
+                                    'video_url': currentVideoUrl.isNotEmpty ? currentVideoUrl : null,
+                                    'is_active': true,
+                                    'expires_at': null,
+                                  };
+
+                                  if (isEdit) {
+                                    await dio.patch(
+                                      '/rest/v1/banners',
+                                      queryParameters: {'id': 'eq.${banner['id']}'},
+                                      data: payload,
+                                    );
+                                  } else {
+                                    await dio.post(
+                                      '/rest/v1/banners',
+                                      data: payload,
+                                    );
+                                  }
+
+                                  Get.back();
+                                  Get.snackbar('نجاح', 'تم حفظ العرض بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                                  _loadBanners();
+                                  if (Get.isRegistered<HomeController>()) {
+                                    Get.find<HomeController>().loadHomeData(refreshMetadata: true);
+                                  }
+                                } catch (e) {
+                                  Get.snackbar('خطأ', 'تعذر حفظ العرض: $e', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                } finally {
+                                  if (mounted) setDlgState(() => isSaving = false);
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0A192F),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isSaving
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('حفظ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, fontFamily: 'Cairo')),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _deleteBanner(String id) async {
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('حذف العرض', style: TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+        content: const Text('هل أنت متأكد من حذف هذا العرض؟', style: TextStyle(fontFamily: 'Cairo')),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('إلغاء', style: TextStyle(color: Color(0xFF64748B), fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            onPressed: () => Get.back(result: true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            child: const Text('نعم، حذف', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final dio = Get.find<DioClient>().dio;
+        await dio.delete(
+          '/rest/v1/banners',
+          queryParameters: {'id': 'eq.$id'},
+        );
+        Get.snackbar('نجاح', 'تم حذف العرض بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+        _loadBanners();
+        if (Get.isRegistered<HomeController>()) {
+          Get.find<HomeController>().loadHomeData(refreshMetadata: true);
+        }
+      } catch (e) {
+        Get.snackbar('خطأ', 'تعذر حذف العرض', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      }
+    }
+  }
+
+  Widget _buildBannersTab() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Add Offer Button (Dark navy with + icon, exactly matching screenshot 1)
+          ElevatedButton.icon(
+            onPressed: () => _showAddEditBannerDialog(),
+            icon: const Icon(Icons.add, size: 18, color: Colors.white),
+            label: const Text(
+              'إضافة عرض',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'Cairo', color: Colors.white),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A192F),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              elevation: 0,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 2. Content
+          if (_isLoadingBanners)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(child: CircularProgressIndicator(color: AppColors.gold)),
+            )
+          else if (_banners.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Icon(Icons.photo_library_outlined, size: 36, color: Color(0xFF94A3B8)),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('إدارة البانرات والعروض الخاصة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, fontFamily: 'Cairo', color: Color(0xFF0F172A))),
+                    const SizedBox(height: 6),
+                    const Text('يمكنك رفع بنرات جديدة وتحديد العروض الترويجية النشطة.', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFF64748B), fontSize: 12.5, fontFamily: 'Cairo')),
+                  ],
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _banners.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final b = _banners[index];
+                final id = b['id']?.toString() ?? '';
+                final title = b['title_ar'] as String? ?? 'بدون عنوان';
+                final subtitle = b['subtitle_ar'] as String? ?? '';
+                final imageUrl = b['image_url'] as String? ?? '';
+                final videoUrl = b['video_url'] as String? ?? '';
+                final hasVideo = videoUrl.isNotEmpty;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.02),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Banner Media Preview
+                      Stack(
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            height: 130,
+                            color: const Color(0xFF0A192F),
+                            child: imageUrl.isNotEmpty
+                                ? CachedNetworkImage(
+                                    imageUrl: imageUrl,
+                                    width: double.infinity,
+                                    height: 130,
+                                    fit: BoxFit.cover,
+                                    placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
+                                    errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 30)),
+                                  )
+                                : const Center(child: Icon(Icons.photo_library_outlined, color: Colors.white38, size: 36)),
+                          ),
+                          if (hasVideo)
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.7),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.videocam_rounded, color: AppColors.gold, size: 14),
+                                    SizedBox(width: 4),
+                                    Text('فيديو', style: TextStyle(fontSize: 10.5, color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+
+                      // Details & Actions Row
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                  ),
+                                  if (subtitle.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () => _showAddEditBannerDialog(banner: b),
+                              borderRadius: BorderRadius.circular(8),
+                              child: const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Icon(Icons.edit_outlined, color: Color(0xFF0F172A), size: 19),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            InkWell(
+                              onTap: () => _deleteBanner(id),
+                              borderRadius: BorderRadius.circular(8),
+                              child: const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 19),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
       ),
     );
   }
@@ -3990,229 +6462,9 @@ class _AdminViewState extends State<AdminView> {
               ),
             ),
 
-            const SizedBox(height: 16),
-
-            // 13. Shipping Companies Settings Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.local_shipping_outlined, color: Color(0xFFD97706), size: 18),
-                      SizedBox(width: 6),
-                      Text('إعدادات شركات التوصيل', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('اسم الخيار الأول', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                            const SizedBox(height: 6),
-                            _buildSettingInput(_shipLocalNameCtrl, placeholder: 'التوصيل المحلي'),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('كلفة التوصيل (د.ع)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                            const SizedBox(height: 6),
-                            _buildSettingInput(_shipLocalCostCtrl, placeholder: '5000', keyboardType: TextInputType.number),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('اسم الخيار الثاني', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                            const SizedBox(height: 6),
-                            _buildSettingInput(_shipAramexNameCtrl, placeholder: 'أرامكس'),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('كلفة التوصيل (د.ع)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                            const SizedBox(height: 6),
-                            _buildSettingInput(_shipAramexCostCtrl, placeholder: '10000', keyboardType: TextInputType.number),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('اترك الاسم فارغاً لإخفاء الخيار من صفحة الدفع.', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // 14. External API Integration Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.link_rounded, color: Color(0xFFD97706), size: 18),
-                      SizedBox(width: 6),
-                      Text('ربط API خارجي', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Base URL', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 6),
-                  _buildSettingInput(_apiBaseUrlCtrl, placeholder: 'https://api.example.com/v1', keyboardType: TextInputType.url),
-
-                  const SizedBox(height: 10),
-
-                  const Text('API Key Header', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 6),
-                  _buildSettingInput(_apiKeyHeaderCtrl, placeholder: 'Authorization'),
-                  const SizedBox(height: 4),
-                  const Text('سيرسل تلقائياً كـ Bearer Token إذا كان Header = Authorization.', style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-
-                  const SizedBox(height: 10),
-
-                  const Text('مفتاح API (API Key)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _apiKeyCtrl,
-                          obscureText: !_showApiKey,
-                          style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A), fontFamily: 'monospace'),
-                          decoration: InputDecoration(
-                            hintText: 'هنا API ألصق مفتاح',
-                            hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                            filled: true,
-                            fillColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
-                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: () => setState(() => _showApiKey = !_showApiKey),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          side: const BorderSide(color: Color(0xFFCBD5E1)),
-                        ),
-                        child: Text(_showApiKey ? 'إخفاء' : 'إظهار', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text('لا تشاركه مع أحد. (app_settings) يُخزَّن المفتاح في قاعدة البيانات.', style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-
-                  const SizedBox(height: 12),
-
-                  const Text('الـ Endpoints', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 4),
-                  const Text('لا توجد endpoints مضافة.', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                  const SizedBox(height: 8),
-                  ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.add, size: 14),
-                    label: const Text('إضافة endpoint', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF1F5F9),
-                      foregroundColor: const Color(0xFF0F172A),
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Get.snackbar('فحص API', 'تم فحص الاتصال بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
-                          },
-                          icon: const Icon(Icons.show_chart_rounded, size: 16, color: Color(0xFF0F172A)),
-                          label: const Text('اختبار الاتصال', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFCBD5E1)),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'يجرّب أول endpoint من السيرفر باستخدام Base URL ومفتاح API المحفوظين.',
-                          style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: ElevatedButton(
-                      onPressed: _isSavingSettings ? null : _saveSettings,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0A192F),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text('API حفظ إعدادات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
             const SizedBox(height: 20),
 
-            // 15. Master Save Button
+            // Master Save Button
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -4833,6 +7085,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   String _condition = 'new';
   bool _isFeatured = false;
   bool _isDeal = false;
+  bool _hasSideOptions = true;
 
   List<CategoryModel> _categories = [];
   List<BrandModel> _brands = [];
@@ -4881,6 +7134,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _condition = p?.condition ?? 'new';
     _isFeatured = p?.isFeatured ?? false;
     _isDeal = p?.isDeal ?? false;
+    _hasSideOptions = p?.hasSideOptions ?? true;
 
     _categories = List.from(widget.initialCategories);
     _brands = List.from(widget.initialBrands);
@@ -5020,6 +7274,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
         'is_deal': _isDeal,
         'compatible_models': _selectedCompatibleModels,
         'condition': _condition,
+        'has_side_options': _hasSideOptions,
       };
 
       if (isEdit) {
@@ -5426,6 +7681,41 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                     ),
                   ),
                   const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'يدعم خيارات الجوانب (يمين / يسار / تخم)',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'عند التعطيل، يصبح المنتج مفرداً ولا يظهر له خيار الجهة أو التخم.',
+                                style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _hasSideOptions,
+                          activeThumbColor: const Color(0xFF0A192F),
+                          onChanged: (v) => setState(() => _hasSideOptions = v),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -5585,6 +7875,425 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Brand Form Dialog
+// ─────────────────────────────────────────────────────────────
+
+class BrandFormDialog extends StatefulWidget {
+  final BrandModel? brand;
+  final VoidCallback onSuccess;
+
+  const BrandFormDialog({super.key, this.brand, required this.onSuccess});
+
+  @override
+  State<BrandFormDialog> createState() => _BrandFormDialogState();
+}
+
+class _BrandFormDialogState extends State<BrandFormDialog> {
+  late final TextEditingController _nameArCtrl;
+  late final TextEditingController _nameEnCtrl;
+  XFile? _localLogoFile;
+  Uint8List? _localLogoBytes;
+  String? _existingLogoUrl;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameArCtrl = TextEditingController(text: widget.brand?.nameAr ?? '');
+    _nameEnCtrl = TextEditingController(text: widget.brand?.nameEn ?? '');
+    _existingLogoUrl = widget.brand?.logoUrl;
+  }
+
+  @override
+  void dispose() {
+    _nameArCtrl.dispose();
+    _nameEnCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickLogo() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked != null) {
+        final bytes = await picked.readAsBytes();
+        setState(() {
+          _localLogoFile = picked;
+          _localLogoBytes = bytes;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveBrand() async {
+    if (_nameArCtrl.text.trim().isEmpty) {
+      Get.snackbar('تنبيه', 'يرجى إدخال اسم الماركة بالعربية', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      String? finalLogoUrl = _existingLogoUrl;
+
+      if (_localLogoFile != null && _localLogoBytes != null) {
+        final bytes = _localLogoBytes!;
+        final ext = _localLogoFile!.name.split('.').last.toLowerCase();
+        final safeExt = ext.isEmpty ? 'png' : ext;
+        final fileName = '${DateTime.now().millisecondsSinceEpoch}_${_localLogoFile!.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}';
+
+        try {
+          await dio.post(
+            '/storage/v1/object/product-images/$fileName',
+            data: bytes,
+            options: Options(headers: {'Content-Type': safeExt == 'png' ? 'image/png' : 'image/jpeg'}),
+          );
+          finalLogoUrl = '${ApiConstants.baseUrl}/storage/v1/object/public/product-images/$fileName';
+        } catch (_) {
+          finalLogoUrl = '${ApiConstants.baseUrl}/storage/v1/object/public/product-images/$fileName';
+        }
+      }
+
+      final isEdit = widget.brand != null;
+      final payload = {
+        'name_ar': _nameArCtrl.text.trim(),
+        'name_en': _nameEnCtrl.text.trim().isNotEmpty ? _nameEnCtrl.text.trim() : _nameArCtrl.text.trim(),
+        if (finalLogoUrl != null && finalLogoUrl.isNotEmpty) 'logo_url': finalLogoUrl,
+      };
+
+      if (isEdit) {
+        await dio.patch(
+          ApiConstants.brands,
+          queryParameters: {'id': 'eq.${widget.brand!.id}'},
+          data: payload,
+        );
+      } else {
+        await dio.post(
+          ApiConstants.brands,
+          data: payload,
+        );
+      }
+
+      Get.back();
+      widget.onSuccess();
+      Get.snackbar(
+        'نجاح',
+        isEdit ? 'تم تحديث الماركة بنجاح' : 'تمت إضافة الماركة بنجاح',
+        backgroundColor: AppColors.inStock,
+        colorText: Colors.white,
+      );
+    } catch (e) {
+      Get.snackbar('خطأ', 'تعذر حفظ الماركة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEdit = widget.brand != null;
+    final hasLogo = _localLogoBytes != null || (_existingLogoUrl != null && _existingLogoUrl!.isNotEmpty);
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 520, maxWidth: 450),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(onPressed: () => Get.back(), icon: const Icon(Icons.close_rounded)),
+                Text(
+                  isEdit ? 'تعديل ماركة' : 'إضافة ماركة جديدة',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(width: 24),
+              ],
+            ),
+            const Divider(),
+            Expanded(
+              child: ListView(
+                children: [
+                  const Text('شعار الماركة', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: InkWell(
+                      onTap: _pickLogo,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: hasLogo
+                            ? (_localLogoBytes != null
+                                ? Image.memory(_localLogoBytes!, fit: BoxFit.contain)
+                                : CachedNetworkImage(imageUrl: _existingLogoUrl!, fit: BoxFit.contain))
+                            : const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.upload_rounded, size: 28, color: Color(0xFF64748B)),
+                                  SizedBox(height: 4),
+                                  Text('رفع شعار', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('الاسم بالعربي *', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _nameArCtrl,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                    decoration: InputDecoration(
+                      hintText: 'مثال: شفروليه',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('الاسم بالإنجليزي (اختياري)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _nameEnCtrl,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                    decoration: InputDecoration(
+                      hintText: 'Chevrolet',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : _saveBrand,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A192F),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _isSaving
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Text('حفظ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Car Model Form Dialog
+// ─────────────────────────────────────────────────────────────
+
+class CarModelFormDialog extends StatefulWidget {
+  final CarModelModel? model;
+  final List<BrandModel> brands;
+  final VoidCallback onSuccess;
+
+  const CarModelFormDialog({super.key, this.model, required this.brands, required this.onSuccess});
+
+  @override
+  State<CarModelFormDialog> createState() => _CarModelFormDialogState();
+}
+
+class _CarModelFormDialogState extends State<CarModelFormDialog> {
+  late final TextEditingController _nameArCtrl;
+  late final TextEditingController _nameEnCtrl;
+  String? _selectedBrandId;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameArCtrl = TextEditingController(text: widget.model?.nameAr ?? '');
+    _nameEnCtrl = TextEditingController(text: widget.model?.nameEn ?? '');
+    _selectedBrandId = widget.model?.brandId;
+    if (_selectedBrandId == null && widget.brands.isNotEmpty) {
+      _selectedBrandId = widget.brands.first.id;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameArCtrl.dispose();
+    _nameEnCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveModel() async {
+    if (_selectedBrandId == null || _selectedBrandId!.isEmpty) {
+      Get.snackbar('تنبيه', 'يرجى اختيار الماركة أولاً', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+    if (_nameArCtrl.text.trim().isEmpty) {
+      Get.snackbar('تنبيه', 'يرجى إدخال اسم نوع السيارة بالعربية', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final isEdit = widget.model != null;
+      final payload = {
+        'brand_id': _selectedBrandId,
+        'name_ar': _nameArCtrl.text.trim(),
+        'name_en': _nameEnCtrl.text.trim().isNotEmpty ? _nameEnCtrl.text.trim() : _nameArCtrl.text.trim(),
+      };
+
+      if (isEdit) {
+        await dio.patch(
+          ApiConstants.carModels,
+          queryParameters: {'id': 'eq.${widget.model!.id}'},
+          data: payload,
+        );
+      } else {
+        await dio.post(
+          ApiConstants.carModels,
+          data: payload,
+        );
+      }
+
+      Get.back();
+      widget.onSuccess();
+      Get.snackbar(
+        'نجاح',
+        isEdit ? 'تم تحديث نوع السيارة بنجاح' : 'تمت إضافة نوع السيارة بنجاح',
+        backgroundColor: AppColors.inStock,
+        colorText: Colors.white,
+      );
+    } catch (e) {
+      Get.snackbar('خطأ', 'تعذر حفظ نوع السيارة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEdit = widget.model != null;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 480, maxWidth: 450),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(onPressed: () => Get.back(), icon: const Icon(Icons.close_rounded)),
+                Text(
+                  isEdit ? 'تعديل نوع سيارة' : 'إضافة نوع سيارة جديد',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(width: 24),
+              ],
+            ),
+            const Divider(),
+            Expanded(
+              child: ListView(
+                children: [
+                  const Text('الماركة *', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedBrandId,
+                        isExpanded: true,
+                        hint: const Text('اختر الماركة', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                        items: widget.brands.map((b) {
+                          return DropdownMenuItem(
+                            value: b.id,
+                            child: Text(b.nameAr, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _selectedBrandId = val);
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('اسم السيارة بالعربي *', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _nameArCtrl,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                    decoration: InputDecoration(
+                      hintText: 'مثال: ماليبو',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('اسم السيارة بالإنجليزي (اختياري)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _nameEnCtrl,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                    decoration: InputDecoration(
+                      hintText: 'Malibu',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : _saveModel,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A192F),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _isSaving
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Text('حفظ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
+              ),
+            ),
+          ],
         ),
       ),
     );

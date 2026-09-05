@@ -32,6 +32,7 @@ class SettingsService extends GetxService {
     }
   }
 
+  String get storePhone => settings['store_phone'] ?? settings['whatsapp_number'] ?? '+9647855500585';
   String get whatsappNumber => settings['whatsapp_number'] ?? '+9647855500585';
   String get storeName => settings['store_name'] ?? 'مكتب علي شوفرليت';
   String get storeTagline => settings['store_tagline'] ?? 'أربيل أهلاً بكم في مكتب علي شوفرليت، GMC وكاديلاك الأصلية';
@@ -43,4 +44,17 @@ class SettingsService extends GetxService {
   String get storeLocationLink => settings['store_location_link'] ?? 'https://maps.google.com/?q=Erbil';
   String get supportEmail => settings['support_email'] ?? 'aliskida816@gmail.com';
   double get usdExchangeRate => double.tryParse(settings['usd_exchange_rate'] ?? '1530') ?? 1530.0;
+
+  // Loyalty Points Configuration
+  int get pointsEarnPer1000 => int.tryParse(settings['points_earn_per_1000_iqd'] ?? '2') ?? 2;
+  double get pointsRedeemIqdPerPoint {
+    final val = double.tryParse(settings['points_redeem_iqd_per_point'] ?? '20');
+    return (val != null && val >= 1) ? val : 20.0;
+  }
+  int get pointsMinRedeem => int.tryParse(settings['points_min_redeem'] ?? '100') ?? 100;
+  int get pointsMaxRedeemPct {
+    final val = int.tryParse(settings['points_max_redeem_pct'] ?? '100');
+    return (val != null) ? val.clamp(0, 100) : 100;
+  }
+  String get pointsCardText => settings['points_card_text'] ?? '';
 }

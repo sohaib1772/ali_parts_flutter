@@ -22,6 +22,7 @@ import '../../modules/legal/views/privacy_view.dart';
 import '../../modules/legal/views/terms_view.dart';
 import '../../modules/addresses/views/addresses_view.dart';
 import '../../modules/notifications/views/notifications_view.dart';
+import '../../modules/replacements/views/replacements_view.dart';
 import '../../modules/admin/views/admin_view.dart';
 import 'app_routes.dart';
 
@@ -45,7 +46,7 @@ class AppPages {
         Get.put<MainNavController>(MainNavController());
         Get.put<HomeController>(HomeController());
       }),
-      transition: Transition.fadeIn,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.home,
@@ -53,6 +54,7 @@ class AppPages {
       binding: BindingsBuilder(() {
         Get.lazyPut<HomeController>(() => HomeController());
       }),
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.products,
@@ -60,7 +62,7 @@ class AppPages {
       binding: BindingsBuilder(() {
         Get.lazyPut<ProductsController>(() => ProductsController());
       }),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.productDetails,
@@ -68,76 +70,82 @@ class AppPages {
       binding: BindingsBuilder(() {
         Get.lazyPut<ProductDetailsController>(() => ProductDetailsController());
       }),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.cart,
       page: () => const CartView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.checkout,
       page: () => const CheckoutView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.orders,
       page: () => const OrdersView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.favorites,
       page: () => const FavoritesView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.search,
       page: () => const SearchView(),
-      transition: Transition.fadeIn,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.offline,
       page: () => const OfflineView(),
-      transition: Transition.downToUp,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.login,
       page: () => const LoginView(),
-      transition: Transition.downToUp,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.about,
       page: () => const AboutView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.privacy,
       page: () => const PrivacyView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.terms,
       page: () => const TermsView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.addresses,
       page: () => const AddressesView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.notifications,
       page: () => const NotificationsView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
+    ),
+    GetPage(
+      name: AppRoutes.replacements,
+      page: () => const ReplacementsView(),
+      transition: Transition.fade,
     ),
     GetPage(
       name: AppRoutes.admin,
       page: () => const AdminView(),
-      transition: Transition.rightToLeft,
+      transition: Transition.fade,
     ),
     GetPage(
       name: '/auth',
       page: () => const SizedBox.shrink(),
+      transition: Transition.fade,
     ),
   ];
 }

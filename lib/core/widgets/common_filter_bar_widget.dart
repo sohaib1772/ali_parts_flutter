@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../app/theme/app_colors.dart';
 import '../../data/models/brand_model.dart';
 import '../../data/models/car_model_model.dart';
@@ -468,7 +469,7 @@ class _FilterDialogWidgetState extends State<_FilterDialogWidget> {
                           color: Colors.white.withValues(alpha: 0.15),
                         ),
                         child: const Icon(
-                          Icons.close_rounded,
+                          IconsaxPlusBold.close_circle,
                           color: Colors.white,
                           size: 16,
                         ),
@@ -521,9 +522,9 @@ class _FilterDialogWidgetState extends State<_FilterDialogWidget> {
                     child: Row(
                       children: [
                         const Icon(
-                          Icons.search_rounded,
+                          IconsaxPlusLinear.search_normal_1,
                           color: Color(0xFF94A3B8),
-                          size: 18,
+                          size: 17,
                         ),
                         const SizedBox(width: 8),
                         Expanded(

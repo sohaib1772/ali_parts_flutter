@@ -10,24 +10,24 @@ class SplashLogoWidget extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 110,
-          height: 110,
+          width: 116,
+          height: 116,
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppColors.navyMedium,
-            border: Border.all(color: AppColors.gold, width: 2),
+            borderRadius: BorderRadius.circular(28),
+            color: const Color(0xFF0F1E36),
+            border: Border.all(color: AppColors.gold.withValues(alpha: 0.8), width: 1.5),
             boxShadow: [
               BoxShadow(
-                color: AppColors.gold.withValues(alpha: 0.3),
-                blurRadius: 24,
-                spreadRadius: 4,
+                color: AppColors.gold.withValues(alpha: 0.28),
+                blurRadius: 28,
+                spreadRadius: 2,
               ),
             ],
           ),
           clipBehavior: Clip.antiAlias,
           padding: const EdgeInsets.all(10),
           child: Image.asset(
-            'assets/icons/app_icon.png',
+            'assets/images/logo.png',
             fit: BoxFit.contain,
             errorBuilder: (_, __, ___) => const Icon(
               Icons.directions_car_filled_rounded,
@@ -36,22 +36,24 @@ class SplashLogoWidget extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         const Text(
-          'Ali Parts',
+          'مكتب علي شوفرليت',
           style: TextStyle(
             color: Colors.white,
-            fontSize: 26,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'Cairo',
+            letterSpacing: -0.5,
           ),
         ),
         const SizedBox(height: 6),
         const Text(
-          'مكتب علي شوفرليت - قطع غيار أصلية',
+          'قطع غيار أصلية ومستعملة · العراق',
           style: TextStyle(
             color: AppColors.gold,
-            fontSize: 14,
+            fontSize: 13,
+            fontFamily: 'Cairo',
             fontWeight: FontWeight.w600,
           ),
         ),

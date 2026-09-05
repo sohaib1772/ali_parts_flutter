@@ -18,5 +18,6 @@ abstract class AppRoutes {
   static const terms = '/terms';
   static const addresses = '/addresses';
   static const notifications = '/notifications';
+  static const replacements = '/replacements';
   static const admin = '/admin';
 }

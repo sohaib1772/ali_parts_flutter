@@ -8,6 +8,8 @@ class ProductModel {
   final double priceUsd;
   final double? comparePriceIqd;
   final double? shippingIqd;
+  final bool mergeDelivery;
+  final String? deliveryGroup;
   final String? categoryId;
   final String? brandId;
   final List<String> compatibleModels;
@@ -19,6 +21,7 @@ class ProductModel {
   final String? dealExpiresAt;
   final int salesCount;
   final String condition; // 'new' | 'used'
+  final bool hasSideOptions;
   final String? createdAt;
 
   ProductModel({
@@ -31,6 +34,8 @@ class ProductModel {
     this.priceUsd = 0,
     this.comparePriceIqd,
     this.shippingIqd,
+    this.mergeDelivery = true,
+    this.deliveryGroup,
     this.categoryId,
     this.brandId,
     this.compatibleModels = const [],
@@ -42,6 +47,7 @@ class ProductModel {
     this.dealExpiresAt,
     this.salesCount = 0,
     this.condition = 'new',
+    this.hasSideOptions = true,
     this.createdAt,
   });
 
@@ -74,6 +80,8 @@ class ProductModel {
       priceUsd: (json['price_usd'] as num?)?.toDouble() ?? 0.0,
       comparePriceIqd: (json['compare_price_iqd'] as num?)?.toDouble(),
       shippingIqd: (json['shipping_iqd'] as num?)?.toDouble(),
+      mergeDelivery: json['merge_delivery'] as bool? ?? true,
+      deliveryGroup: json['delivery_group'] as String?,
       categoryId: json['category_id'] as String?,
       brandId: json['brand_id'] as String?,
       compatibleModels: parseStringList(json['compatible_models']),
@@ -85,6 +93,7 @@ class ProductModel {
       dealExpiresAt: json['deal_expires_at'] as String?,
       salesCount: (json['sales_count'] as num?)?.toInt() ?? 0,
       condition: json['condition'] as String? ?? 'new',
+      hasSideOptions: json['has_side_options'] as bool? ?? true,
       createdAt: json['created_at'] as String?,
     );
   }
@@ -99,6 +108,8 @@ class ProductModel {
     'price_usd': priceUsd,
     'compare_price_iqd': comparePriceIqd,
     'shipping_iqd': shippingIqd,
+    'merge_delivery': mergeDelivery,
+    'delivery_group': deliveryGroup,
     'category_id': categoryId,
     'brand_id': brandId,
     'compatible_models': compatibleModels,
@@ -110,6 +121,7 @@ class ProductModel {
     'deal_expires_at': dealExpiresAt,
     'sales_count': salesCount,
     'condition': condition,
+    'has_side_options': hasSideOptions,
     'created_at': createdAt,
   };
 }

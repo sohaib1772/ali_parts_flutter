@@ -3,7 +3,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+import '../../../app/config/api_constants.dart';
 import '../../../app/config/app_constants.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
@@ -24,6 +28,8 @@ class AccountView extends StatefulWidget {
 }
 
 class _AccountViewState extends State<AccountView> {
+  bool _isUploadingAvatar = false;
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +38,8 @@ class _AccountViewState extends State<AccountView> {
 
   void _refreshAccountData() async {
     final auth = Get.find<AuthService>();
+    final settings = Get.find<SettingsService>();
+    await settings.fetchSettings();
     if (auth.isLoggedIn.value) {
       await auth.fetchUserProfile();
       final sec = Get.find<SecureStorageService>();
@@ -40,6 +48,58 @@ class _AccountViewState extends State<AccountView> {
         Get.find<CartService>().syncWithServer(uid);
         Get.find<FavoritesService>().syncWithServer(uid);
       }
+    }
+  }
+
+  Future<void> _pickAndUploadAvatar(AuthService auth) async {
+    if (_isUploadingAvatar) return;
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked == null) return;
+
+      setState(() => _isUploadingAvatar = true);
+      final bytes = await picked.readAsBytes();
+      final ext = picked.name.split('.').last.toLowerCase();
+      final safeExt = ext.isEmpty ? 'jpg' : ext;
+      final fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}_${picked.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}';
+
+      final dio = Get.find<DioClient>().dio;
+      await dio.post(
+        '/storage/v1/object/product-images/$fileName',
+        data: bytes,
+        options: Options(headers: {'Content-Type': safeExt == 'png' ? 'image/png' : 'image/jpeg'}),
+      );
+
+      final uploadedUrl = '${ApiConstants.baseUrl}/storage/v1/object/public/product-images/$fileName';
+      final ok = await auth.updateAvatar(uploadedUrl);
+      if (ok) {
+        Get.snackbar(
+          'نجاح',
+          'تم تحديث الصورة الشخصية بنجاح',
+          backgroundColor: AppColors.inStock,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+      } else {
+        Get.snackbar(
+          'خطأ',
+          'تعذر حفظ الصورة الشخصية',
+          backgroundColor: AppColors.outOfStock,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+      }
+    } catch (e) {
+      Get.snackbar(
+        'خطأ',
+        'تعذر رفع الصورة: $e',
+        backgroundColor: AppColors.outOfStock,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.TOP,
+      );
+    } finally {
+      if (mounted) setState(() => _isUploadingAvatar = false);
     }
   }
 
@@ -65,11 +125,11 @@ class _AccountViewState extends State<AccountView> {
             child: Column(
               children: [
                 const AppHeaderWidget(
-                title: 'حسابي',
-                showBack: false,
-              ),
+                  title: 'حسابي',
+                  showBack: false,
+                ),
 
-              // Scrollable Body Content
+                // Scrollable Body Content
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -104,41 +164,76 @@ class _AccountViewState extends State<AccountView> {
                             ),
                             child: Row(
                               children: [
-                                // Circular Avatar with S Letter / Image
-                                Container(
-                                  width: 60,
-                                  height: 60,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: const Color(0xFF0D9488),
-                                    border: Border.all(color: AppColors.gold, width: 1.8),
-                                  ),
-                                  clipBehavior: Clip.antiAlias,
-                                  child: auth.userAvatar.value.isNotEmpty
-                                      ? CachedNetworkImage(
-                                          imageUrl: auth.userAvatar.value,
-                                          fit: BoxFit.cover,
-                                          errorWidget: (_, __, ___) => Center(
-                                            child: Text(
-                                              initial,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 24,
-                                                fontWeight: FontWeight.w900,
-                                              ),
-                                            ),
+                                // Circular Avatar with S Letter / Image + Tap to change
+                                GestureDetector(
+                                  onTap: () => _pickAndUploadAvatar(auth),
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Container(
+                                        width: 62,
+                                        height: 62,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: const Color(0xFF0D9488),
+                                          border: Border.all(
+                                            color: AppColors.gold.withValues(alpha: 0.6),
+                                            width: 1.5,
                                           ),
-                                        )
-                                      : Center(
-                                          child: Text(
-                                            initial,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 24,
-                                              fontWeight: FontWeight.w900,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: AppColors.gold.withValues(alpha: 0.2),
+                                              blurRadius: 6,
+                                            ),
+                                          ],
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: auth.userAvatar.value.isNotEmpty
+                                            ? CachedNetworkImage(
+                                                imageUrl: auth.userAvatar.value,
+                                                fit: BoxFit.cover,
+                                                errorWidget: (_, __, ___) => Center(
+                                                  child: Text(
+                                                    initial,
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 24,
+                                                      fontWeight: FontWeight.w900,
+                                                      fontFamily: 'Cairo',
+                                                    ),
+                                                  ),
+                                                ),
+                                              )
+                                            : Center(
+                                                child: Text(
+                                                  initial,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 24,
+                                                    fontWeight: FontWeight.w900,
+                                                    fontFamily: 'Cairo',
+                                                  ),
+                                                ),
+                                              ),
+                                      ),
+                                      if (_isUploadingAvatar)
+                                        Container(
+                                          width: 62,
+                                          height: 62,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: Colors.black.withValues(alpha: 0.5),
+                                          ),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              width: 22,
+                                              height: 22,
+                                              child: CircularProgressIndicator(color: AppColors.gold, strokeWidth: 2.2),
                                             ),
                                           ),
                                         ),
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(width: 14),
 
@@ -147,25 +242,26 @@ class _AccountViewState extends State<AccountView> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      // Name + Edit icon
-                                      Row(
-                                        children: [
-                                          Flexible(
-                                            child: Text(
-                                              auth.userName.value.isNotEmpty ? auth.userName.value : 'عميل Ali Parts',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 16,
+                                      // Name + Edit icon (both clickable!)
+                                      GestureDetector(
+                                        onTap: () => _showEditNameDialog(context, auth),
+                                        child: Row(
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                auth.userName.value.isNotEmpty ? auth.userName.value : 'عميل Ali Parts',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 16,
+                                                  fontFamily: 'Cairo',
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          GestureDetector(
-                                            onTap: () => _showEditNameDialog(context, auth),
-                                            child: const Icon(Icons.edit_rounded, color: AppColors.gold, size: 16),
-                                          ),
-                                        ],
+                                            const SizedBox(width: 6),
+                                            const Icon(Icons.edit_rounded, color: AppColors.gold, size: 16),
+                                          ],
+                                        ),
                                       ),
                                       const SizedBox(height: 3),
 
@@ -193,23 +289,27 @@ class _AccountViewState extends State<AccountView> {
                                           ),
                                         ),
 
-                                      const SizedBox(height: 4),
+                                      const SizedBox(height: 5),
 
-                                      // Change Photo text
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.camera_alt_outlined, color: AppColors.gold.withValues(alpha: 0.85), size: 13),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'تغيير الصورة',
-                                            style: TextStyle(
-                                              color: AppColors.gold.withValues(alpha: 0.85),
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
+                                      // Change Photo text button
+                                      GestureDetector(
+                                        onTap: () => _pickAndUploadAvatar(auth),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.camera_alt_outlined, color: AppColors.gold.withValues(alpha: 0.9), size: 13),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              auth.userAvatar.value.isNotEmpty ? 'تغيير الصورة' : 'إضافة صورة شخصية',
+                                              style: TextStyle(
+                                                color: AppColors.gold.withValues(alpha: 0.9),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                                fontFamily: 'Cairo',
+                                              ),
                                             ),
-                                          ),
-                                        ],
+                                          ],
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -289,10 +389,14 @@ class _AccountViewState extends State<AccountView> {
 
                       const SizedBox(height: 14),
 
-                      // 2. Points Card
+                      // 2. Points Card (Synchronized with Server App Settings!)
                       Obx(() {
                         final pts = auth.pointsBalance.value;
-                        final pointsIqd = pts * 50;
+                        final redeemRate = settings.pointsRedeemIqdPerPoint;
+                        final pointsIqd = pts * redeemRate;
+                        final cardText = settings.pointsCardText.isNotEmpty
+                            ? settings.pointsCardText
+                            : 'كل 100 نقطة = ${Formatters.formatIQD(100 * redeemRate)} خصم عند الشراء';
 
                         return Container(
                           padding: const EdgeInsets.all(16),
@@ -333,6 +437,7 @@ class _AccountViewState extends State<AccountView> {
                                         color: Color(0xFF0A192F),
                                         fontSize: 11,
                                         fontWeight: FontWeight.bold,
+                                        fontFamily: 'Cairo',
                                       ),
                                     ),
                                     const SizedBox(height: 2),
@@ -344,25 +449,28 @@ class _AccountViewState extends State<AccountView> {
                                             color: Color(0xFF0A192F),
                                             fontSize: 20,
                                             fontWeight: FontWeight.w900,
+                                            fontFamily: 'Cairo',
                                           ),
                                         ),
                                         const SizedBox(width: 6),
                                         Text(
                                           '≈ ${Formatters.formatIQD(pointsIqd.toDouble())}',
                                           style: TextStyle(
-                                            color: const Color(0xFF0A192F).withValues(alpha: 0.75),
+                                            color: const Color(0xFF0A192F).withValues(alpha: 0.8),
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
+                                            fontFamily: 'Cairo',
                                           ),
                                         ),
                                       ],
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'كل 100 نقطة = 5,000 دينار خصم عند الشراء',
+                                      cardText,
                                       style: TextStyle(
-                                        color: const Color(0xFF0A192F).withValues(alpha: 0.7),
+                                        color: const Color(0xFF0A192F).withValues(alpha: 0.75),
                                         fontSize: 10,
+                                        fontFamily: 'Cairo',
                                       ),
                                     ),
                                   ],
@@ -399,8 +507,9 @@ class _AccountViewState extends State<AccountView> {
                                 return Column(
                                   children: [
                                     _buildMenuItem(
-                                      icon: Icons.shield_outlined,
+                                      icon: IconsaxPlusBold.shield_security,
                                       title: 'لوحة الإدارة',
+                                      gradientColors: const [Color(0xFF312E81), Color(0xFF4F46E5), Color(0xFF6366F1)],
                                       onTap: () => Get.toNamed(AppRoutes.admin),
                                     ),
                                     const Divider(color: Color(0xFFF1F5F9), height: 1),
@@ -410,40 +519,54 @@ class _AccountViewState extends State<AccountView> {
 
                               // 2. My Orders
                               _buildMenuItem(
-                                icon: Icons.inventory_2_outlined,
+                                icon: IconsaxPlusBold.box,
                                 title: 'طلباتي السابقة',
+                                gradientColors: const [Color(0xFF1D4ED8), Color(0xFF2563EB), Color(0xFF38BDF8)],
                                 onTap: () => Get.toNamed(AppRoutes.orders),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 3. Favorites
+                              // 3. Replacement Requests
                               _buildMenuItem(
-                                icon: Icons.favorite_border_rounded,
+                                icon: IconsaxPlusBold.convert,
+                                title: 'طلبات الاستبدال',
+                                gradientColors: const [Color(0xFF0F766E), Color(0xFF0D9488), Color(0xFF14B8A6)],
+                                onTap: () => Get.toNamed(AppRoutes.replacements),
+                              ),
+                              const Divider(color: Color(0xFFF1F5F9), height: 1),
+
+                              // 4. Favorites
+                              _buildMenuItem(
+                                icon: IconsaxPlusBold.heart,
                                 title: 'المفضلة',
+                                gradientColors: const [Color(0xFFBE123C), Color(0xFFE11D48), Color(0xFFFB7185)],
                                 onTap: () => Get.toNamed(AppRoutes.favorites),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 4. Addresses
+                              // 5. Addresses
                               _buildMenuItem(
-                                icon: Icons.location_on_outlined,
+                                icon: IconsaxPlusBold.location,
                                 title: 'العناوين',
+                                gradientColors: const [Color(0xFFC2410C), Color(0xFFEA580C), Color(0xFFFB923C)],
                                 onTap: () => Get.toNamed(AppRoutes.addresses),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 5. Notifications
+                              // 6. Notifications
                               _buildMenuItem(
-                                icon: Icons.notifications_none_rounded,
+                                icon: IconsaxPlusBold.notification_bing,
                                 title: 'الإشعارات',
+                                gradientColors: const [Color(0xFFB45309), Color(0xFFD97706), Color(0xFFFBBF24)],
                                 onTap: () => Get.toNamed(AppRoutes.notifications),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 6. Contact Us
+                              // 7. Contact Us
                               _buildMenuItem(
-                                icon: Icons.chat_bubble_outline_rounded,
+                                icon: IconsaxPlusBold.messages_2,
                                 title: 'اتصل بنا',
+                                gradientColors: const [Color(0xFF15803D), Color(0xFF16A34A), Color(0xFF4ADE80)],
                                 onTap: () async {
                                   final url = Formatters.generateWhatsAppUrl(phone: settings.whatsappNumber);
                                   final uri = Uri.parse(url);
@@ -454,26 +577,29 @@ class _AccountViewState extends State<AccountView> {
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 7. About Us
+                              // 8. About Us
                               _buildMenuItem(
-                                icon: Icons.info_outline_rounded,
+                                icon: IconsaxPlusBold.info_circle,
                                 title: 'من نحن',
+                                gradientColors: const [Color(0xFF0369A1), Color(0xFF0284C7), Color(0xFF38BDF8)],
                                 onTap: () => Get.toNamed(AppRoutes.about),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 8. Privacy Policy
+                              // 9. Privacy Policy
                               _buildMenuItem(
-                                icon: Icons.shield_outlined,
+                                icon: IconsaxPlusBold.security_safe,
                                 title: 'سياسة الخصوصية',
+                                gradientColors: const [Color(0xFF6D28D9), Color(0xFF7C3AED), Color(0xFFA78BFA)],
                                 onTap: () => Get.toNamed(AppRoutes.privacy),
                               ),
                               const Divider(color: Color(0xFFF1F5F9), height: 1),
 
-                              // 9. Terms and Conditions
+                              // 10. Terms and Conditions
                               _buildMenuItem(
-                                icon: Icons.description_outlined,
+                                icon: IconsaxPlusBold.document_text_1,
                                 title: 'الشروط والأحكام',
+                                gradientColors: const [Color(0xFF334155), Color(0xFF475569), Color(0xFF64748B)],
                                 onTap: () => Get.toNamed(AppRoutes.terms),
                               ),
                             ],
@@ -521,7 +647,7 @@ class _AccountViewState extends State<AccountView> {
                                 child: const Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.logout_rounded, color: Color(0xFFDC2626), size: 18),
+                                    Icon(IconsaxPlusBold.logout, color: Color(0xFFDC2626), size: 19),
                                     SizedBox(width: 8),
                                     Text(
                                       'تسجيل الخروج',
@@ -542,7 +668,7 @@ class _AccountViewState extends State<AccountView> {
                             Center(
                               child: TextButton.icon(
                                 onPressed: () => _showDeleteAccountDialog(context, auth),
-                                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 18),
+                                icon: const Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 17),
                                 label: const Text(
                                   'حذف الحساب',
                                   style: TextStyle(
@@ -573,21 +699,59 @@ class _AccountViewState extends State<AccountView> {
     required IconData icon,
     required String title,
     required VoidCallback onTap,
+    required List<Color> gradientColors,
+    Color? shadowColor,
   }) {
+    final baseColor = gradientColors[1];
+    final effShadow = shadowColor ?? baseColor.withValues(alpha: 0.35);
+
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
             Container(
-              width: 38,
-              height: 38,
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFFBEB),
-                shape: BoxShape.circle,
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(13),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: gradientColors,
+                ),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: effShadow,
+                    blurRadius: 8,
+                    offset: const Offset(0, 3.5),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
               ),
-              child: Icon(icon, color: const Color(0xFFD97706), size: 20),
+              child: Center(
+                child: Icon(
+                  icon,
+                  color: Colors.white,
+                  size: 21,
+                  shadows: [
+                    Shadow(
+                      color: Colors.black.withValues(alpha: 0.25),
+                      blurRadius: 3,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -597,6 +761,7 @@ class _AccountViewState extends State<AccountView> {
                   color: Color(0xFF0F172A),
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
+                  fontFamily: 'Cairo',
                 ),
               ),
             ),
@@ -609,54 +774,115 @@ class _AccountViewState extends State<AccountView> {
 
   void _showEditNameDialog(BuildContext context, AuthService auth) {
     final ctrl = TextEditingController(text: auth.userName.value);
+    bool isSaving = false;
+
     Get.dialog(
-      Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'تعديل الاسم',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textDark),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: ctrl,
-                style: const TextStyle(fontSize: 14, color: AppColors.textDark),
-                decoration: InputDecoration(
-                  labelText: 'الاسم الكامل',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+      StatefulBuilder(
+        builder: (ctx, setDlgState) {
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextButton(
-                    onPressed: () => Get.back(),
-                    child: const Text('إلغاء', style: TextStyle(color: AppColors.textSecondary)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: () => Get.back(),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                      const Text(
+                        'تعديل الاسم',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(width: 20),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () async {
-                      if (ctrl.text.trim().isNotEmpty) {
-                        await auth.updateFullName(ctrl.text.trim());
-                        Get.back();
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.gold,
-                      foregroundColor: const Color(0xFF0F172A),
+                  const Divider(height: 20),
+                  const Text(
+                    'الاسم الكامل',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF334155)),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    style: const TextStyle(fontSize: 13.5, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+                    decoration: InputDecoration(
+                      hintText: 'أدخل اسمك الكامل',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5),
+                      ),
                     ),
-                    child: const Text('حفظ', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 46,
+                    child: ElevatedButton(
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              final trimmed = ctrl.text.trim();
+                              if (trimmed.length < 2) {
+                                Get.snackbar(
+                                  'تنبيه',
+                                  'الاسم قصير جداً (حرفين كحد أدنى)',
+                                  backgroundColor: AppColors.outOfStock,
+                                  colorText: Colors.white,
+                                  snackPosition: SnackPosition.TOP,
+                                );
+                                return;
+                              }
+                              setDlgState(() => isSaving = true);
+                              final ok = await auth.updateFullName(trimmed);
+                              Get.back();
+                              if (ok) {
+                                Get.snackbar(
+                                  'نجاح',
+                                  'تم تحديث الاسم بنجاح',
+                                  backgroundColor: AppColors.inStock,
+                                  colorText: Colors.white,
+                                  snackPosition: SnackPosition.TOP,
+                                );
+                              } else {
+                                Get.snackbar(
+                                  'خطأ',
+                                  'تعذر تحديث الاسم',
+                                  backgroundColor: AppColors.outOfStock,
+                                  colorText: Colors.white,
+                                  snackPosition: SnackPosition.TOP,
+                                );
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0A192F),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: isSaving
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('حفظ التعديل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, fontFamily: 'Cairo')),
+                    ),
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

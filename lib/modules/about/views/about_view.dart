@@ -1,11 +1,11 @@
-import '../../../core/widgets/app_header_widget.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/settings_service.dart';
+import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/app_header_widget.dart';
 
 class AboutView extends StatelessWidget {
   const AboutView({super.key});
@@ -35,244 +35,150 @@ class AboutView extends StatelessWidget {
 
               // Scrollable Body Content
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  children: [
-                    // 1. Hero Card
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF0A192F), Color(0xFF102A43)],
-                        ),
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 14,
-                            offset: const Offset(0, 4),
+                child: Container(
+                  color: const Color(0xFFF8FAFC),
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    children: [
+                      // 1. Hero Card
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF0A192F), Color(0xFF102A43)],
                           ),
-                        ],
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.12),
+                              blurRadius: 14,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              settings.storeName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              settings.storeAbout.isNotEmpty
+                                  ? settings.storeAbout
+                                  : 'متجر علي لقطع غيار السيارات متخصص بتوفير قطع غيار شفروليه، جي إم سي، وكاديلاك الأصلية والمستعملة بحالة ممتازة. نوفر أسعار منافسة، جودة مضمونة، وشحن إلى جميع محافظات العراق مع خدمة عملاء سريعة وموثوق / اربيل',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 13,
+                                height: 1.6,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+
+                      const SizedBox(height: 14),
+
+                      // 2. 2x2 Highlights Grid
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 1.25,
                         children: [
-                          Text(
-                            settings.storeName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                            ),
+                          _buildFeatureCard(
+                            icon: Icons.access_time_rounded,
+                            title: '${settings.storeYears}+ سنوات خبرة',
+                            desc: 'في سوق قطع غيار السيارات',
                           ),
-                          const SizedBox(height: 10),
-                          Text(
-                            settings.storeAbout.isNotEmpty
-                                ? settings.storeAbout
-                                : 'متجر علي لقطع غيار السيارات متخصص بتوفير قطع غيار شفروليه، جي إم سي، وكاديلاك الأصلية والمستعملة بحالة ممتازة. نوفر أسعار منافسة، جودة مضمونة، وشحن إلى جميع محافظات العراق مع خدمة عملاء سريعة وموثوق / اربيل',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.85),
-                              fontSize: 13,
-                              height: 1.6,
-                            ),
+                          _buildFeatureCard(
+                            icon: Icons.diamond_outlined,
+                            title: 'جودة عالية',
+                            desc: 'قطع أصلية ومكافئة للمواصفات',
                           ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // 2. 2x2 Highlights Grid
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 1.25,
-                      children: [
-                        _buildFeatureCard(
-                          icon: Icons.access_time_rounded,
-                          title: '${settings.storeYears}+ سنوات خبرة',
-                          desc: 'في سوق قطع غيار السيارات',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.diamond_outlined,
-                          title: 'جودة عالية',
-                          desc: 'قطع أصلية ومكافئة للمواصفات',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.verified_outlined,
-                          title: 'ضمان حقيقي',
-                          desc: 'ضمان على كل قطعة تشريها',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.storefront_outlined,
-                          title: 'موقع متميز',
-                          desc: settings.storeAddress.isNotEmpty ? settings.storeAddress : 'اربيل',
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // 3. Storefront Image Section
-                    Row(
-                      children: [
-                        const Icon(Icons.storefront_rounded, color: Color(0xFFD97706), size: 20),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'واجهة المحل',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
+                          _buildFeatureCard(
+                            icon: Icons.verified_outlined,
+                            title: 'ضمان حقيقي',
+                            desc: 'ضمان على كل قطعة تشريها',
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      height: 180,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.04),
-                            blurRadius: 8,
+                          _buildFeatureCard(
+                            icon: Icons.storefront_outlined,
+                            title: 'موقع متميز',
+                            desc: settings.storeAddress.isNotEmpty ? settings.storeAddress : 'اربيل',
                           ),
                         ],
                       ),
-                      clipBehavior: Clip.antiAlias,
-                      child: settings.storeFrontImage.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: settings.storeFrontImage,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => Image.asset(
-                                'assets/images/banner_placeholder.png',
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: const Color(0xFF0A192F),
-                                  child: const Center(
-                                    child: Icon(Icons.storefront_rounded, color: AppColors.gold, size: 48),
-                                  ),
-                                ),
-                              ),
-                            )
-                          : Container(
-                              color: const Color(0xFF0A192F),
-                              child: const Center(
-                                child: Icon(Icons.storefront_rounded, color: AppColors.gold, size: 48),
+
+                      const SizedBox(height: 14),
+
+                      // 3. Contact & Social Channels
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'تواصل معنا',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
                               ),
                             ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // 4. Store Location Card
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 38,
-                                height: 38,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFFFFBEB),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.location_on_outlined, color: Color(0xFFD97706), size: 22),
-                              ),
-                              const SizedBox(width: 12),
-                              const Text(
-                                'موقع المحل',
-                                style: TextStyle(
-                                  color: Color(0xFF0F172A),
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            settings.storeAddress.isNotEmpty ? settings.storeAddress : 'اربيل',
-                            style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                          ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 42,
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                final url = settings.storeLocationLink.isNotEmpty
-                                    ? settings.storeLocationLink
-                                    : 'https://maps.google.com/?q=Erbil';
-                                final uri = Uri.parse(url);
-                                if (await canLaunchUrl(uri)) {
-                                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                }
-                              },
-                              icon: const Icon(Icons.map_outlined, size: 18),
-                              label: const Text('فتح الموقع على الخريطة', style: TextStyle(fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0A192F),
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
+                            const SizedBox(height: 12),
+                            _buildContactTile(
+                              icon: Icons.phone_in_talk_rounded,
+                              iconBg: const Color(0xFFEFF6FF),
+                              iconColor: const Color(0xFF2563EB),
+                              title: 'الهاتف المباشر',
+                              subtitle: settings.storePhone,
+                              onTap: () => _launch('tel:${settings.storePhone}'),
                             ),
-                          ),
-                        ],
+                            const Divider(height: 16, color: Color(0xFFF1F5F9)),
+                            _buildContactTile(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              iconBg: const Color(0xFFECFDF5),
+                              iconColor: const Color(0xFF10B981),
+                              title: 'واتساب خدمة العملاء',
+                              subtitle: settings.whatsappNumber,
+                              onTap: () => _launch(Formatters.generateWhatsAppUrl(phone: settings.whatsappNumber)),
+                            ),
+                            const Divider(height: 16, color: Color(0xFFF1F5F9)),
+                            _buildContactTile(
+                              icon: Icons.location_on_outlined,
+                              iconBg: const Color(0xFFFFFBEB),
+                              iconColor: const Color(0xFFD97706),
+                              title: 'عنوان المحل / المستودع',
+                              subtitle: settings.storeAddress.isNotEmpty ? settings.storeAddress : 'اربيل',
+                              onTap: () {},
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // 5. 2x2 Values Grid
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 1.25,
-                      children: [
-                        _buildFeatureCard(
-                          icon: Icons.shield_outlined,
-                          title: 'قطع أصلية 100%',
-                          desc: 'نضمن أصالة كل قطعة نبيعها',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.local_shipping_outlined,
-                          title: 'توصيل سريع',
-                          desc: 'لكل محافظات العراق',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.military_tech_outlined,
-                          title: 'خبرة موثوقة',
-                          desc: 'سنوات في مجال قطع الغيار',
-                        ),
-                        _buildFeatureCard(
-                          icon: Icons.people_outline_rounded,
-                          title: 'خدمة عملاء 7/24',
-                          desc: 'دائماً بجانبك عبر واتساب',
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 24),
-                  ],
+                      const SizedBox(height: 24),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -288,15 +194,16 @@ class AboutView extends StatelessWidget {
     required String desc,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -304,38 +211,92 @@ class AboutView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFFFBEB),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: const Color(0xFFD97706), size: 20),
-          ),
-          const SizedBox(height: 8),
+          Icon(icon, color: AppColors.gold, size: 22),
+          const SizedBox(height: 6),
           Text(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: Color(0xFF0F172A),
               fontSize: 13,
               fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
             ),
           ),
           const SizedBox(height: 2),
           Text(
             desc,
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
+              fontSize: 10.5,
               color: Color(0xFF64748B),
-              fontSize: 11,
             ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildContactTile({
+    required IconData icon,
+    required Color iconBg,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF94A3B8)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launch(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 }

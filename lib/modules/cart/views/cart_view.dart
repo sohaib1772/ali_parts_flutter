@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/cart_service.dart';
@@ -54,7 +55,7 @@ class CartView extends StatelessWidget {
                                 color: AppColors.cardWhite,
                                 border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
                               ),
-                              child: const Icon(Icons.shopping_bag_outlined, color: AppColors.gold, size: 54),
+                              child: const Icon(IconsaxPlusBold.bag_2, color: AppColors.gold, size: 54),
                             ),
                             const SizedBox(height: 16),
                             const Text(
@@ -127,12 +128,35 @@ class CartView extends StatelessWidget {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Text(
-                                    'التوصيل',
-                                    style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 13.5,
-                                    ),
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'التوصيل',
+                                        style: TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                      if (cart.hasSplitShipment) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFEF3C7),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFFCD34D)),
+                                          ),
+                                          child: Text(
+                                            '${cart.shipmentCount} شحنات',
+                                            style: const TextStyle(
+                                              color: Color(0xFFB45309),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                   Text(
                                     cart.deliveryFeeIqd > 0 ? Formatters.formatIQD(cart.deliveryFeeIqd) : 'مجاني',
@@ -144,6 +168,34 @@ class CartView extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                              if (cart.hasSplitShipment) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFFBEB),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: const Color(0xFFFDE68A)),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 16),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'يتضمن طلبك ${cart.shipmentCount} شحنات منفصلة لحماية القطع الحساسة أو الكبيرة أثناء النقل، ويتم احتساب أجور توصيل مستقلة لكل شحنة.',
+                                          style: const TextStyle(
+                                            color: Color(0xFF92400E),
+                                            fontSize: 11,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                               const Padding(
                                 padding: EdgeInsets.symmetric(vertical: 12),
                                 child: Divider(color: Color(0xFFF1F5F9), height: 1),
@@ -189,11 +241,16 @@ class CartView extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            child: const Text(
-                              'متابعة الدفع',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                            child: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'متابعة الدفع',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'Cairo',
+                                  height: 1.2,
+                                ),
                               ),
                             ),
                           ),
@@ -294,35 +351,36 @@ class _CartItemCardState extends State<_CartItemCard> {
 
                 const SizedBox(height: 8),
 
-                // Side Selector Chips (LH / RH / PAIR / اختياري)
-                Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildSideChip('LH · يسار', 'LH', side),
-                      _buildSideChip('RH · يمين', 'RH', side),
-                      _buildSideChip('تخم', 'PAIR', side),
-                      if (side == null)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          child: Text(
-                            'اختياري',
-                            style: TextStyle(
-                              color: Color(0xFF94A3B8),
-                              fontSize: 10,
+                // Side Selector Chips (LH / RH / PAIR / اختياري) - only if product supports sides
+                if (product?.hasSideOptions ?? true) ...[
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildSideChip('LH · يسار', 'LH', side),
+                        _buildSideChip('RH · يمين', 'RH', side),
+                        _buildSideChip('تخم', 'PAIR', side),
+                        if (side == null)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            child: Text(
+                              'اختياري',
+                              style: TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 10,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-
-                const SizedBox(height: 8),
+                  const SizedBox(height: 8),
+                ],
 
                 // Price (reflects 2x for PAIR automatically)
                 Text(
@@ -383,9 +441,9 @@ class _CartItemCardState extends State<_CartItemCard> {
                       child: Container(
                         padding: const EdgeInsets.all(6),
                         child: const Icon(
-                          Icons.delete_outline_rounded,
+                          IconsaxPlusBold.trash,
                           color: AppColors.remainingBadge,
-                          size: 20,
+                          size: 19,
                         ),
                       ),
                     ),
@@ -400,7 +458,7 @@ class _CartItemCardState extends State<_CartItemCard> {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.note_alt_outlined, color: AppColors.gold, size: 14),
+                        Icon(IconsaxPlusBold.note, color: AppColors.gold, size: 14),
                         SizedBox(width: 4),
                         Text(
                           'إضافة ملاحظة',
@@ -421,7 +479,7 @@ class _CartItemCardState extends State<_CartItemCard> {
                       children: [
                         const Row(
                           children: [
-                            Icon(Icons.note_alt_outlined, color: AppColors.gold, size: 14),
+                            Icon(IconsaxPlusBold.note, color: AppColors.gold, size: 14),
                             SizedBox(width: 4),
                             Text(
                               'ملاحظة لهذا المنتج:',

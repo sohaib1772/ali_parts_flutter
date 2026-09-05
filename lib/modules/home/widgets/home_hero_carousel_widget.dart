@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
@@ -44,23 +45,43 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
     super.dispose();
   }
 
+  void _onBannerTap(BannerModel banner) async {
+    // 1. If has external or deep link
+    if (banner.link != null && banner.link!.trim().isNotEmpty) {
+      final uri = Uri.tryParse(banner.link!.trim());
+      if (uri != null && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+
+    // 2. If has video URL
+    if (banner.videoUrl != null && banner.videoUrl!.trim().isNotEmpty) {
+      final uri = Uri.tryParse(banner.videoUrl!.trim());
+      if (uri != null && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.banners.isEmpty) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
         children: [
           Container(
-            height: 160,
+            height: 175,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.cardBorder, width: 1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 12,
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 14,
                   offset: const Offset(0, 4),
                 ),
               ],
@@ -72,60 +93,156 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
               itemCount: widget.banners.length,
               itemBuilder: (ctx, i) {
                 final banner = widget.banners[i];
+                final hasVideo = banner.videoUrl != null && banner.videoUrl!.isNotEmpty;
+
                 return GestureDetector(
-                  onTap: () async {
-                    if (banner.link != null && banner.link!.isNotEmpty) {
-                      final uri = Uri.tryParse(banner.link!);
-                      if (uri != null && await canLaunchUrl(uri)) {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
-                      }
-                    }
-                  },
+                  onTap: () => _onBannerTap(banner),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
+                      // Banner Image
                       CachedNetworkImage(
-                        imageUrl: Formatters.thumbUrl(banner.imageUrl, width: 800),
+                        imageUrl: Formatters.thumbUrl(banner.imageUrl, width: 900),
                         fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(color: AppColors.navyMedium),
-                        errorWidget: (_, __, ___) => Container(
-                          color: AppColors.navyMedium,
-                          child: const Icon(Icons.broken_image_rounded, color: AppColors.gold),
-                        ),
-                      ),
-                      if (banner.titleAr != null && banner.titleAr!.isNotEmpty)
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withValues(alpha: 0.8),
-                                ],
-                              ),
-                            ),
-                            child: Text(
-                              banner.titleAr!,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
+                        placeholder: (_, __) => Container(
+                          color: const Color(0xFF0F1E36),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
                             ),
                           ),
                         ),
+                        errorWidget: (_, __, ___) => Container(
+                          color: const Color(0xFF0F1E36),
+                          child: const Icon(Icons.broken_image_rounded, color: AppColors.gold, size: 36),
+                        ),
+                      ),
+
+                      // Gradient Overlay for readability
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.1),
+                                Colors.transparent,
+                                Colors.black.withValues(alpha: 0.85),
+                              ],
+                              stops: const [0.0, 0.4, 1.0],
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // Top Exclusive Badge
+                      Positioned(
+                        top: 10,
+                        right: 10,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0A192F).withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(IconsaxPlusBold.star_1, size: 12, color: AppColors.gold),
+                              SizedBox(width: 4),
+                              Text(
+                                'عرض خاص',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'Cairo',
+                                  color: AppColors.gold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // Video Play Indicator if Video is attached
+                      if (hasVideo)
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: AppColors.gold,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.gold.withValues(alpha: 0.4),
+                                  blurRadius: 12,
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Color(0xFF0A192F),
+                              size: 28,
+                            ),
+                          ),
+                        ),
+
+                      // Bottom Text Overlay
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (banner.titleAr != null && banner.titleAr!.isNotEmpty)
+                                Text(
+                                  banner.titleAr!,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    fontFamily: 'Cairo',
+                                    height: 1.2,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              if (banner.subtitleAr != null && banner.subtitleAr!.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  banner.subtitleAr!,
+                                  style: const TextStyle(
+                                    color: Color(0xFFE2E8F0),
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    fontFamily: 'Cairo',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 );
               },
             ),
           ),
+
+          // Indicator Dots
           if (widget.banners.length > 1) ...[
             const SizedBox(height: 8),
             Row(
@@ -135,10 +252,10 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
                 (i) => AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: _currentPage == i ? 18 : 6,
+                  width: _currentPage == i ? 20 : 6,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: _currentPage == i ? AppColors.gold : AppColors.navyLight,
+                    color: _currentPage == i ? AppColors.gold : const Color(0xFFCBD5E1),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),

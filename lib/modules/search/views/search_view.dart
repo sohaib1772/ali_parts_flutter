@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/common_filter_bar_widget.dart';
+import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import '../../../data/models/brand_model.dart';
 import '../../../data/models/car_model_model.dart';
 import '../../../data/models/category_model.dart';
@@ -27,7 +28,6 @@ class _SearchViewState extends State<SearchView> {
   bool _isLoading = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
-  bool _showScrollToTop = false;
   int _offset = 0;
   int _totalCount = 0;
   static const int _pageSize = 20;
@@ -57,24 +57,11 @@ class _SearchViewState extends State<SearchView> {
   }
 
   void _onScroll() {
-    final shouldShow = _scrollController.offset > 350;
-    if (shouldShow != _showScrollToTop) {
-      setState(() => _showScrollToTop = shouldShow);
-    }
-
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 300) {
       if (!_isLoading && !_isLoadingMore && _hasMore) {
         _loadMore();
       }
     }
-  }
-
-  void _scrollToTop() {
-    _scrollController.animateTo(
-      0,
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeOutCubic,
-    );
   }
 
   void _loadMetadata() async {
@@ -193,26 +180,6 @@ class _SearchViewState extends State<SearchView> {
       ),
       child: Scaffold(
         backgroundColor: AppColors.navyDark, // Dark status bar
-        floatingActionButton: AnimatedScale(
-          scale: _showScrollToTop ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOutBack,
-          child: FloatingActionButton(
-            heroTag: 'search_scroll_to_top',
-            onPressed: _scrollToTop,
-            backgroundColor: Colors.white,
-            foregroundColor: AppColors.navyDark,
-            elevation: 8,
-            shape: const CircleBorder(
-              side: BorderSide(color: AppColors.gold, width: 1.8),
-            ),
-            child: const Icon(
-              Icons.keyboard_arrow_up_rounded,
-              color: AppColors.navyDark,
-              size: 30,
-            ),
-          ),
-        ),
         body: SafeArea(
           bottom: false,
           child: Container(
@@ -228,8 +195,10 @@ class _SearchViewState extends State<SearchView> {
 
                 // 2. Full-Page Unified Scrollable Area
                 Expanded(
-                  child: CustomScrollView(
-                    controller: _scrollController,
+                  child: Stack(
+                    children: [
+                      CustomScrollView(
+                        controller: _scrollController,
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),
@@ -267,6 +236,10 @@ class _SearchViewState extends State<SearchView> {
                                       hintText: 'ابحث عن قطعة، اسم أو رقم OEM...',
                                       hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
                                       border: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      disabledBorder: InputBorder.none,
+                                      errorBorder: InputBorder.none,
                                       isDense: true,
                                       contentPadding: EdgeInsets.zero,
                                     ),
@@ -472,7 +445,7 @@ class _SearchViewState extends State<SearchView> {
                               crossAxisCount: 2,
                               mainAxisSpacing: 12,
                               crossAxisSpacing: 12,
-                              childAspectRatio: 0.60,
+                              childAspectRatio: 0.58,
                             ),
                             delegate: SliverChildBuilderDelegate(
                               (ctx, i) => ProductCardWidget(product: _results[i]),
@@ -505,12 +478,21 @@ class _SearchViewState extends State<SearchView> {
                       ],
                     ],
                   ),
-                ),
-              ],
+
+                  // Floating Glass Scroll To Top Button
+                  GlassScrollToTopButton(
+                    scrollController: _scrollController,
+                    bottom: 20,
+                    left: 18,
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 }

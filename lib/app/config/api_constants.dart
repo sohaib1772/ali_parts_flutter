@@ -22,7 +22,10 @@ class ApiConstants {
   static const String profiles = '/rest/v1/profiles';
   static const String appSettings = '/rest/v1/app_settings';
   static const String notifications = '/rest/v1/notifications';
+  static const String replacementRequests = '/rest/v1/replacement_requests';
+  static const String replacementStatusLog = '/rest/v1/replacement_status_log';
   static const String rpcAddCartItem = '/rest/v1/rpc/add_cart_item';
+  static const String rpcRegisterDeviceToken = '/rest/v1/rpc/register_device_token';
   static const String authUser = '/auth/v1/user';
   static const String authOtp = '/auth/v1/otp';
   static const String authVerify = '/auth/v1/verify';

@@ -1,9 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../app/routes/app_routes.dart';
 import '../../app/theme/app_colors.dart';
 import '../services/cart_service.dart';
+import '../services/notification_service.dart';
 import '../services/settings_service.dart';
 
 class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
@@ -82,9 +84,9 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
                 ),
                 child: const Center(
                   child: Icon(
-                    Icons.arrow_forward_ios_rounded,
+                    IconsaxPlusLinear.arrow_right_3,
                     color: Colors.white,
-                    size: 16,
+                    size: 18,
                   ),
                 ),
               ),
@@ -99,16 +101,16 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
               height: 42,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF102A43),
-                border: Border.all(color: AppColors.gold, width: 1.5),
+                color: const Color(0xFF0A192F),
+                border: Border.all(color: AppColors.gold.withValues(alpha: 0.6), width: 1.5),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.gold.withValues(alpha: 0.25),
+                    color: AppColors.gold.withValues(alpha: 0.2),
                     blurRadius: 6,
                   ),
                 ],
               ),
-              padding: const EdgeInsets.all(3.5),
+              clipBehavior: Clip.antiAlias,
               child: ClipOval(
                 child: settings.storeLogo.isNotEmpty
                     ? CachedNetworkImage(
@@ -184,25 +186,58 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
                     shape: BoxShape.circle,
                     color: Color(0xFF132B45),
                   ),
-                  child: const Icon(Icons.search_rounded, color: Colors.white, size: 20),
+                  child: const Icon(IconsaxPlusLinear.search_normal_1, color: Colors.white, size: 19),
                 ),
               ),
               const SizedBox(width: 8),
             ],
 
-            // Notification Bell
+            // Notification Bell with Badge
             if (showNotifications) ...[
-              GestureDetector(
-                onTap: () => Get.toNamed(AppRoutes.notifications),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Color(0xFF132B45),
-                  ),
-                  child: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 20),
-                ),
-              ),
+              Obx(() {
+                final notifService = Get.find<NotificationService>();
+                final count = notifService.unreadCount.value;
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    GestureDetector(
+                      onTap: () => Get.toNamed(AppRoutes.notifications),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0xFF132B45),
+                        ),
+                        child: const Icon(IconsaxPlusLinear.notification_bing, color: Colors.white, size: 19),
+                      ),
+                    ),
+                    if (count > 0)
+                      Positioned(
+                        top: -3,
+                        right: -3,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFFEAB308),
+                            border: Border.all(color: const Color(0xFF0A192F), width: 1.5),
+                          ),
+                          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                          child: Center(
+                            child: Text(
+                              count > 99 ? '99+' : count.toString(),
+                              style: const TextStyle(
+                                color: Color(0xFF0F172A),
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              }),
               const SizedBox(width: 8),
             ],
 
@@ -223,7 +258,7 @@ class AppHeaderWidget extends StatelessWidget implements PreferredSizeWidget {
                           shape: BoxShape.circle,
                           color: Color(0xFF132B45),
                         ),
-                        child: const Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 20),
+                        child: const Icon(IconsaxPlusLinear.shopping_cart, color: Colors.white, size: 19),
                       ),
                     ),
                     if (count > 0)

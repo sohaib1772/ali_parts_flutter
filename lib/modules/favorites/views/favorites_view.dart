@@ -1,12 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/favorites_service.dart';
 import '../../../core/widgets/app_header_widget.dart';
+import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import '../../products/widgets/product_card_widget.dart';
 
-class FavoritesView extends StatelessWidget {
+class FavoritesView extends StatefulWidget {
   const FavoritesView({super.key});
+
+  @override
+  State<FavoritesView> createState() => _FavoritesViewState();
+}
+
+class _FavoritesViewState extends State<FavoritesView> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,44 +39,56 @@ class FavoritesView extends StatelessWidget {
                 title: 'المفضلة',
               ),
               Expanded(
-                child: Obx(() {
-                  if (favorites.favoriteProducts.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(24),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AppColors.cardWhite,
-                              border: Border.all(color: AppColors.borderLight),
-                            ),
-                            child: const Icon(Icons.favorite_border_rounded, color: AppColors.gold, size: 54),
+                child: Stack(
+                  children: [
+                    Obx(() {
+                      if (favorites.favoriteProducts.isEmpty) {
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(24),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.cardWhite,
+                                  border: Border.all(color: AppColors.borderLight),
+                                ),
+                                child: const Icon(IconsaxPlusBold.heart, color: AppColors.gold, size: 54),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text('قائمة المفضلة فارغة', style: TextStyle(color: AppColors.textDark, fontSize: 17, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 6),
+                              const Text('احفظ قطع الغيار المفضلة لديك بالضغط على رمز القلب', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                            ],
                           ),
-                          const SizedBox(height: 16),
-                          const Text('قائمة المفضلة فارغة', style: TextStyle(color: AppColors.textDark, fontSize: 17, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 6),
-                          const Text('احفظ قطع الغيار المفضلة لديك بالضغط على رمز القلب', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                        ],
-                      ),
-                    );
-                  }
+                        );
+                      }
 
-                  return GridView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: favorites.favoriteProducts.length,
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.62,
+                      return GridView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+                        itemCount: favorites.favoriteProducts.length,
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.58,
+                        ),
+                        itemBuilder: (ctx, i) {
+                          return ProductCardWidget(product: favorites.favoriteProducts[i]);
+                        },
+                      );
+                    }),
+
+                    // Floating Glass Scroll To Top Button
+                    GlassScrollToTopButton(
+                      scrollController: _scrollController,
+                      bottom: 82,
+                      left: 18,
                     ),
-                    itemBuilder: (ctx, i) {
-                      return ProductCardWidget(product: favorites.favoriteProducts[i]);
-                    },
-                  );
-                }),
+                  ],
+                ),
               ),
             ],
           ),
