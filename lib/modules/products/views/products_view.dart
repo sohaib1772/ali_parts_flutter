@@ -66,36 +66,42 @@ class ProductsView extends GetView<ProductsController> {
                         color: AppColors.gold,
                         backgroundColor: Colors.white,
                         onRefresh: controller.loadProducts,
-                        child: CustomScrollView(
-                          controller: controller.scrollController,
-                          slivers: [
-                            SliverPadding(
-                              padding: const EdgeInsets.all(16),
-                              sliver: SliverGrid(
-                                gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
-                                delegate: SliverChildBuilderDelegate(
-                                  (ctx, i) => ProductCardWidget(product: controller.products[i]),
-                                  childCount: controller.products.length,
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: controller.handleScrollNotification,
+                          child: CustomScrollView(
+                            controller: controller.scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(
+                              parent: BouncingScrollPhysics(),
+                            ),
+                            slivers: [
+                              SliverPadding(
+                                padding: const EdgeInsets.all(16),
+                                sliver: SliverGrid(
+                                  gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
+                                  delegate: SliverChildBuilderDelegate(
+                                    (ctx, i) => ProductCardWidget(product: controller.products[i]),
+                                    childCount: controller.products.length,
+                                  ),
                                 ),
                               ),
-                            ),
-                            if (controller.isLoadingMore.value)
-                              const SliverToBoxAdapter(
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 16),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        color: AppColors.gold,
+                              if (controller.isLoadingMore.value)
+                                const SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: AppColors.gold,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       );
                     }),

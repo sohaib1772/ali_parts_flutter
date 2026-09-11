@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'package:get/get.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../core/services/cart_service.dart';
 import '../../../core/services/favorites_service.dart';
 import '../../../core/services/settings_service.dart';
+import '../../../core/services/notification_service.dart';
 
 class SplashController extends GetxController {
   @override
@@ -20,6 +23,27 @@ class SplashController extends GetxController {
       Future.delayed(const Duration(milliseconds: 1500)),
     ]);
 
+    // Check for force update
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+      final settings = Get.find<SettingsService>();
+      final minVersion = Platform.isIOS ? settings.minAppVersionIos : settings.minAppVersionAndroid;
+
+      if (SettingsService.isVersionOutdated(currentVersion, minVersion)) {
+        Get.offAllNamed(AppRoutes.forceUpdate, arguments: {
+          'currentVersion': currentVersion,
+          'minVersion': minVersion,
+        });
+        return;
+      }
+    } catch (_) {
+      // Gracefully continue if version retrieval fails in dev/test
+    }
+
     Get.offAllNamed(AppRoutes.mainNav);
+    if (Get.isRegistered<NotificationService>()) {
+      Get.find<NotificationService>().checkAndExecutePendingNotification();
+    }
   }
 }

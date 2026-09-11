@@ -30,6 +30,11 @@ class AuthService extends GetxService {
   final RxString userAvatar = ''.obs;
   final RxInt pointsBalance = 0.obs;
   final RxBool isAdmin = false.obs;
+  final RxBool isStaff = false.obs;
+  final Rx<Map<String, dynamic>?> staffPermissions = Rx<Map<String, dynamic>?>(null);
+
+  bool get canAccessAdmin => isAdmin.value || isStaff.value;
+  String? get userId => currentUser.value?.id;
 
   StreamSubscription<Uri>? _linkSubscription;
   Completer<Map<String, dynamic>>? _authCompleter;
@@ -372,16 +377,51 @@ class AuthService extends GetxService {
         pointsBalance.value = pts;
       }
 
-      final roleRes = await _authDio.get(
-        '/rest/v1/user_roles',
-        queryParameters: {'user_id': 'eq.$userId', 'role': 'eq.admin', 'select': 'role'},
-        options: Options(headers: {
-          'Authorization': 'Bearer $token',
-          'apikey': ApiConstants.anonKey,
-        }),
-      );
-      if (roleRes.statusCode == 200 && roleRes.data is List && (roleRes.data as List).isNotEmpty) {
-        isAdmin.value = true;
+      // 1. Check Admin Role
+      try {
+        final roleRes = await _authDio.get(
+          '/rest/v1/user_roles',
+          queryParameters: {'user_id': 'eq.$userId', 'role': 'eq.admin', 'select': 'role'},
+          options: Options(headers: {
+            'Authorization': 'Bearer $token',
+            'apikey': ApiConstants.anonKey,
+          }),
+        );
+        if (roleRes.statusCode == 200 && roleRes.data is List && (roleRes.data as List).isNotEmpty) {
+          isAdmin.value = true;
+        } else {
+          isAdmin.value = false;
+        }
+      } catch (_) {
+        isAdmin.value = false;
+      }
+
+      // 2. Check Staff Permissions
+      try {
+        final staffRes = await _authDio.get(
+          '/rest/v1/staff_permissions',
+          queryParameters: {'user_id': 'eq.$userId', 'select': '*'},
+          options: Options(headers: {
+            'Authorization': 'Bearer $token',
+            'apikey': ApiConstants.anonKey,
+          }),
+        );
+        if (staffRes.statusCode == 200 && staffRes.data is List && (staffRes.data as List).isNotEmpty) {
+          final sData = (staffRes.data as List).first as Map<String, dynamic>;
+          final hasAnyPerm = sData['can_orders'] == true ||
+              sData['can_products'] == true ||
+              sData['can_replacements'] == true ||
+              sData['can_block'] == true ||
+              sData['can_moderate_comments'] == true;
+          isStaff.value = hasAnyPerm;
+          staffPermissions.value = hasAnyPerm ? sData : null;
+        } else {
+          isStaff.value = false;
+          staffPermissions.value = null;
+        }
+      } catch (_) {
+        isStaff.value = false;
+        staffPermissions.value = null;
       }
 
       currentUser.value = UserModel(
@@ -391,6 +431,8 @@ class AuthService extends GetxService {
         avatarUrl: userAvatar.value.isNotEmpty ? userAvatar.value : null,
         pointsBalance: pointsBalance.value,
         isAdmin: isAdmin.value,
+        isStaff: isStaff.value,
+        staffPermissions: staffPermissions.value,
       );
     } catch (e) {
       AppLogger.e('Error fetching user profile', e);
@@ -496,6 +538,8 @@ class AuthService extends GetxService {
     userAvatar.value = '';
     pointsBalance.value = 0;
     isAdmin.value = false;
+    isStaff.value = false;
+    staffPermissions.value = null;
 
     if (Get.isRegistered<CartService>()) {
       Get.find<CartService>().clearLocalCache();

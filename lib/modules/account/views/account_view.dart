@@ -132,6 +132,9 @@ class _AccountViewState extends State<AccountView> {
                 // Scrollable Body Content
                 Expanded(
                   child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                     children: [
                       // 1. Profile Header Card
@@ -501,9 +504,9 @@ class _AccountViewState extends State<AccountView> {
                           borderRadius: BorderRadius.circular(24),
                           child: Column(
                             children: [
-                              // 1. Admin Dashboard (Only if Admin)
+                              // 1. Admin Dashboard (If Admin or Staff)
                               Obx(() {
-                                if (!auth.isAdmin.value) return const SizedBox.shrink();
+                                if (!auth.canAccessAdmin) return const SizedBox.shrink();
                                 return Column(
                                   children: [
                                     _buildMenuItem(
@@ -607,75 +610,188 @@ class _AccountViewState extends State<AccountView> {
                         ),
                       ),
 
-                      // 4. Sign Out Button & Delete Account Section
+                      // 4. Sign Out & Delete Account Section (or Guest Login prompt)
                       Obx(() {
-                        if (!auth.isLoggedIn.value) return const SizedBox.shrink();
+                        final isLoggedIn = auth.isLoggedIn.value;
 
-                        return Column(
-                          children: [
-                            const SizedBox(height: 18),
-
-                            // Logout Outlined Pill Button
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: OutlinedButton(
-                                onPressed: () async {
-                                  await auth.signOut();
-                                  if (Get.isRegistered<MainNavController>()) {
-                                    Get.find<MainNavController>().currentIndex.value = 0;
-                                  }
-                                  Get.offAllNamed(AppRoutes.mainNav);
-                                  Get.snackbar(
-                                    'تم تسجيل الخروج',
-                                    'تم مسح كافة البيانات وتسجيل الخروج بنجاح',
-                                    snackPosition: SnackPosition.TOP,
-                                    backgroundColor: AppColors.navyMedium,
-                                    colorText: Colors.white,
-                                    duration: const Duration(seconds: 2),
-                                    borderRadius: 12,
-                                  );
-                                },
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: Color(0xFFFCA5A5), width: 1.2),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(24),
+                        if (isLoggedIn) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 18),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                child: Text(
+                                  'إدارة الحساب',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF64748B),
+                                    fontFamily: 'Cairo',
                                   ),
-                                  backgroundColor: Colors.white,
-                                  foregroundColor: const Color(0xFFDC2626),
                                 ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(IconsaxPlusBold.logout, color: Color(0xFFDC2626), size: 19),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'تسجيل الخروج',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFFDC2626),
-                                      ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: AppColors.cardWhite,
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(color: const Color(0xFFFEE2E2)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFFDC2626).withValues(alpha: 0.04),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 2),
                                     ),
                                   ],
                                 ),
-                              ),
-                            ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(24),
+                                  child: Column(
+                                    children: [
+                                      // 1. Logout Action
+                                      InkWell(
+                                        onTap: () => _showLogoutDialog(context, auth),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                width: 42,
+                                                height: 42,
+                                                decoration: BoxDecoration(
+                                                  borderRadius: BorderRadius.circular(13),
+                                                  gradient: const LinearGradient(
+                                                    begin: Alignment.topLeft,
+                                                    end: Alignment.bottomRight,
+                                                    colors: [Color(0xFFDC2626), Color(0xFFEF4444)],
+                                                  ),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: const Color(0xFFDC2626).withValues(alpha: 0.25),
+                                                      blurRadius: 8,
+                                                      offset: const Offset(0, 3),
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: const Center(
+                                                  child: Icon(IconsaxPlusBold.logout, color: Colors.white, size: 20),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 14),
+                                              const Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      'تسجيل الخروج',
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: Color(0xFFDC2626),
+                                                        fontFamily: 'Cairo',
+                                                      ),
+                                                    ),
+                                                    SizedBox(height: 2),
+                                                    Text(
+                                                      'الخروج من حسابك بأمان على هذا الجهاز',
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: Color(0xFF94A3B8),
+                                                        fontFamily: 'Cairo',
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const Icon(Icons.chevron_left_rounded, color: Color(0xFFFCA5A5), size: 20),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
 
-                            const SizedBox(height: 12),
+                                      const Divider(color: Color(0xFFFEE2E2), height: 1),
 
-                            // Delete Account Text Button
-                            Center(
-                              child: TextButton.icon(
-                                onPressed: () => _showDeleteAccountDialog(context, auth),
-                                icon: const Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 17),
-                                label: const Text(
-                                  'حذف الحساب',
-                                  style: TextStyle(
-                                    color: Color(0xFFDC2626),
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
+                                      // 2. Delete Account Action
+                                      InkWell(
+                                        onTap: () => _showDeleteAccountDialog(context, auth),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                width: 42,
+                                                height: 42,
+                                                decoration: BoxDecoration(
+                                                  borderRadius: BorderRadius.circular(13),
+                                                  color: const Color(0xFFFEF2F2),
+                                                  border: Border.all(color: const Color(0xFFFECDD3)),
+                                                ),
+                                                child: const Center(
+                                                  child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 20),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 14),
+                                              const Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      'حذف الحساب نهائياً',
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: Color(0xFFDC2626),
+                                                        fontFamily: 'Cairo',
+                                                      ),
+                                                    ),
+                                                    SizedBox(height: 2),
+                                                    Text(
+                                                      'مسح كافة بياناتك الشخصية وعناوينك وسلتك',
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: Color(0xFF94A3B8),
+                                                        fontFamily: 'Cairo',
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const Icon(Icons.chevron_left_rounded, color: Color(0xFFFCA5A5), size: 20),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+
+                        // Guest Action (Log in prompt at bottom too)
+                        return Column(
+                          children: [
+                            const SizedBox(height: 18),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final res = await Get.toNamed(AppRoutes.login);
+                                  if (res == true) _refreshAccountData();
+                                },
+                                icon: const Icon(IconsaxPlusBold.login, size: 18),
+                                label: const Text(
+                                  'تسجيل الدخول / إنشاء حساب',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, fontFamily: 'Cairo'),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A192F),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  elevation: 2,
                                 ),
                               ),
                             ),
@@ -684,7 +800,7 @@ class _AccountViewState extends State<AccountView> {
                       }),
 
                       // 5. Generous bottom space so content completely clears the floating bottom navigation bar
-                      const SizedBox(height: 120),
+                      const SizedBox(height: 160),
                     ],
                   ),
                 ),
@@ -884,6 +1000,86 @@ class _AccountViewState extends State<AccountView> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context, AuthService auth) {
+    Get.dialog(
+      Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFEE2E2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(IconsaxPlusBold.logout, color: Color(0xFFDC2626), size: 26),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'تسجيل الخروج',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'هل أنت متأكد من رغبتك في تسجيل الخروج من حسابك؟',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4, fontFamily: 'Cairo'),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Get.back(),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('إلغاء', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        Get.back();
+                        await auth.signOut();
+                        if (Get.isRegistered<MainNavController>()) {
+                          Get.find<MainNavController>().currentIndex.value = 0;
+                        }
+                        Get.offAllNamed(AppRoutes.mainNav);
+                        Get.snackbar(
+                          'تم تسجيل الخروج',
+                          'تم تسجيل الخروج بنجاح',
+                          snackPosition: SnackPosition.TOP,
+                          backgroundColor: AppColors.navyMedium,
+                          colorText: Colors.white,
+                          duration: const Duration(seconds: 2),
+                          borderRadius: 12,
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFDC2626),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('خروج', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, fontFamily: 'Cairo')),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

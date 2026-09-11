@@ -52,10 +52,14 @@ class HomeView extends GetView<HomeController> {
                             );
                           }
 
-                          return CustomScrollView(
-                            controller: controller.scrollController,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            slivers: [
+                          return NotificationListener<ScrollNotification>(
+                            onNotification: controller.handleScrollNotification,
+                            child: CustomScrollView(
+                              controller: controller.scrollController,
+                              physics: const AlwaysScrollableScrollPhysics(
+                                parent: BouncingScrollPhysics(),
+                              ),
+                              slivers: [
                               // Filter Bar
                               const SliverToBoxAdapter(
                                 child: HomeFilterBarWidget(),
@@ -342,7 +346,7 @@ class HomeView extends GetView<HomeController> {
                                 child: SizedBox(height: 120),
                               ),
                             ],
-                          );
+                          ));
                         }),
                       ),
                     ],

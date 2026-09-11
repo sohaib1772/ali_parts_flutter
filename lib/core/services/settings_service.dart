@@ -57,4 +57,35 @@ class SettingsService extends GetxService {
     return (val != null) ? val.clamp(0, 100) : 100;
   }
   String get pointsCardText => settings['points_card_text'] ?? '';
+
+  // Force Update Configuration
+  String get minAppVersionAndroid => settings['min_app_version_android'] ?? '1.0.0';
+  String get minAppVersionIos => settings['min_app_version_ios'] ?? '1.0.0';
+  String get forceUpdateMessage =>
+      settings['force_update_message'] ??
+      'يتوفر تحديث جديد ومهم للتطبيق يحتوي على تحسينات ومميزات جديدة. يرجى التحديث للمتابعة.';
+  String get appStoreUrl =>
+      settings['app_store_url'] ?? 'https://apps.apple.com/app/id6741753177';
+  String get playStoreUrl =>
+      settings['play_store_url'] ??
+      'https://play.google.com/store/apps/details?id=com.mkteb.ali.chevrolet';
+
+  /// Helper to compare two versions (e.g. "1.1.0" vs "1.2.0")
+  static bool isVersionOutdated(String currentVersion, String minRequiredVersion) {
+    try {
+      final curParts = currentVersion.split('+').first.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final minParts = minRequiredVersion.split('+').first.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+
+      final maxLen = curParts.length > minParts.length ? curParts.length : minParts.length;
+      for (var i = 0; i < maxLen; i++) {
+        final cur = i < curParts.length ? curParts[i] : 0;
+        final req = i < minParts.length ? minParts[i] : 0;
+        if (cur < req) return true;
+        if (cur > req) return false;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 }

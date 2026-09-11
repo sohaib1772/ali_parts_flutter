@@ -6,6 +6,8 @@ class UserModel {
   final bool isBlocked;
   final int pointsBalance;
   final bool isAdmin;
+  final bool isStaff;
+  final Map<String, dynamic>? staffPermissions;
   final String? createdAt;
 
   UserModel({
@@ -16,6 +18,8 @@ class UserModel {
     this.isBlocked = false,
     this.pointsBalance = 0,
     this.isAdmin = false,
+    this.isStaff = false,
+    this.staffPermissions,
     this.createdAt,
   });
 
@@ -27,6 +31,8 @@ class UserModel {
     bool? isBlocked,
     int? pointsBalance,
     bool? isAdmin,
+    bool? isStaff,
+    Map<String, dynamic>? staffPermissions,
     String? createdAt,
   }) {
     return UserModel(
@@ -37,11 +43,18 @@ class UserModel {
       isBlocked: isBlocked ?? this.isBlocked,
       pointsBalance: pointsBalance ?? this.pointsBalance,
       isAdmin: isAdmin ?? this.isAdmin,
+      isStaff: isStaff ?? this.isStaff,
+      staffPermissions: staffPermissions ?? this.staffPermissions,
       createdAt: createdAt ?? this.createdAt,
     );
   }
 
-  factory UserModel.fromJson(Map<String, dynamic> json, {bool isAdmin = false}) {
+  factory UserModel.fromJson(
+    Map<String, dynamic> json, {
+    bool isAdmin = false,
+    bool isStaff = false,
+    Map<String, dynamic>? staffPermissions,
+  }) {
     return UserModel(
       id: json['id'] as String? ?? '',
       fullName: json['full_name'] as String?,
@@ -50,6 +63,8 @@ class UserModel {
       isBlocked: json['is_blocked'] as bool? ?? false,
       pointsBalance: (json['points_balance'] as num?)?.toInt() ?? 0,
       isAdmin: isAdmin,
+      isStaff: isStaff,
+      staffPermissions: staffPermissions,
       createdAt: json['created_at'] as String?,
     );
   }
@@ -61,6 +76,9 @@ class UserModel {
     'avatar_url': avatarUrl,
     'is_blocked': isBlocked,
     'points_balance': pointsBalance,
+    'is_admin': isAdmin,
+    'is_staff': isStaff,
+    'staff_permissions': staffPermissions,
     'created_at': createdAt,
   };
 }

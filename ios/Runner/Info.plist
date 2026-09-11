@@ -63,5 +63,11 @@
 			<string>fetch</string>
 			<string>remote-notification</string>
 		</array>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>يحتاج التطبيق للوصول إلى مكتبة الصور لحفظ ومشاركة صور المنتجات والفواتير</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>يحتاج التطبيق لإذن حفظ صور الفواتير والمنتجات في ألبوم الصور</string>
+		<key>NSCameraUsageDescription</key>
+		<string>يحتاج التطبيق لاستخدام الكاميرا لتصوير قطع الغيار والمنتجات</string>
 	</dict>
 </plist>

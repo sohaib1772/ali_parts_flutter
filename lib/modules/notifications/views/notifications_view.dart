@@ -6,8 +6,6 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/widgets/app_header_widget.dart';
-import '../../../data/repositories/order_repository.dart';
-import '../../orders/views/order_details_view.dart';
 
 class NotificationsView extends StatefulWidget {
   const NotificationsView({super.key});
@@ -28,7 +26,12 @@ class _NotificationsViewState extends State<NotificationsView> {
     _notifService.fetchUnreadCount();
   }
 
-  IconData _statusIcon(String? status) {
+  IconData _statusIcon(String? status, [String? type]) {
+    if (type == 'promo') return IconsaxPlusBold.gallery;
+    if (type == 'new_product' || type == 'product') return IconsaxPlusBold.box;
+    if (type == 'replacement_status') return IconsaxPlusBold.convert;
+    if (type == 'account_status') return IconsaxPlusBold.shield_cross;
+    if (type == 'admin_broadcast') return IconsaxPlusBold.notification_bing;
     switch (status) {
       case 'received':
         return IconsaxPlusBold.box_add;
@@ -49,14 +52,19 @@ class _NotificationsViewState extends State<NotificationsView> {
     }
   }
 
-  String _statusLabel(String? status) {
+  String _statusLabel(String? status, [String? type]) {
+    if (type == 'promo') return 'عرض جديد';
+    if (type == 'new_product' || type == 'product') return 'منتج جديد';
+    if (type == 'replacement_status') return 'طلب استبدال';
+    if (type == 'account_status') return 'حالة الحساب';
+    if (type == 'admin_broadcast') return 'إشعار عام';
     switch (status) {
       case 'received':
         return 'تم الاستلام';
       case 'preparing':
         return 'جاري التجهيز';
       case 'packed':
-        return 'تم التغليف';
+        return 'تم التغلفة';
       case 'shipped':
         return 'تم الشحن';
       case 'out_for_delivery':
@@ -70,7 +78,12 @@ class _NotificationsViewState extends State<NotificationsView> {
     }
   }
 
-  Color _statusColor(String? status) {
+  Color _statusColor(String? status, [String? type]) {
+    if (type == 'promo') return const Color(0xFFD97706);
+    if (type == 'new_product' || type == 'product') return const Color(0xFF10B981);
+    if (type == 'replacement_status') return const Color(0xFF0D9488);
+    if (type == 'account_status') return const Color(0xFFDC2626);
+    if (type == 'admin_broadcast') return const Color(0xFF2563EB);
     switch (status) {
       case 'received':
         return const Color(0xFF2563EB);
@@ -107,23 +120,20 @@ class _NotificationsViewState extends State<NotificationsView> {
   void _onNotificationTap(Map<String, dynamic> item) async {
     final notifId = item['id'] as String?;
     final orderId = item['order_id'] as String?;
+    final type = item['type'] as String?;
+    final productId = item['product_id'] as String?;
+    final bannerId = item['banner_id'] as String?;
 
     if (notifId != null && item['read_at'] == null) {
       _notifService.markRead(notifId);
     }
 
-    if (orderId != null && orderId.isNotEmpty) {
-      if (Get.isRegistered<OrderRepository>()) {
-        final repo = Get.find<OrderRepository>();
-        final order = await repo.fetchOrderById(orderId);
-        if (order != null) {
-          Get.to(
-            () => OrderDetailsView(order: order),
-            transition: Transition.fade,
-          );
-        }
-      }
-    }
+    _notifService.handleNotificationNavigation(
+      type: type,
+      orderId: orderId,
+      productId: productId,
+      bannerId: bannerId,
+    );
   }
 
   void _loadMore() async {
@@ -286,9 +296,10 @@ class _NotificationsViewState extends State<NotificationsView> {
                       final title = item['title'] as String? ?? 'إشعار';
                       final body = item['body'] as String? ?? '';
                       final status = item['status'] as String?;
-                      final statusLbl = _statusLabel(status);
-                      final statusClr = _statusColor(status);
-                      final iconData = _statusIcon(status);
+                      final type = item['type'] as String?;
+                      final statusLbl = _statusLabel(status, type);
+                      final statusClr = _statusColor(status, type);
+                      final iconData = _statusIcon(status, type);
                       final timeStr = _timeAgo(item['created_at'] as String?);
 
                       return GestureDetector(

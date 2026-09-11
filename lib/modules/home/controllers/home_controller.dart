@@ -69,17 +69,33 @@ class HomeController extends GetxController {
   void _onScroll() {
     if (scrollController.hasClients) {
       // Toggle scroll to top button
-      final shouldShow = scrollController.position.pixels > 500;
+      final shouldShow = scrollController.position.pixels > 400;
       if (showScrollToTop.value != shouldShow) {
         showScrollToTop.value = shouldShow;
       }
 
-      // Infinite scroll load more
-      if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 400) {
+      // Infinite scroll load more with generous 750px threshold for smooth scrolling on all screen sizes
+      if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 750) {
         if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
           loadMoreProducts();
         }
       }
+    }
+  }
+
+  bool handleScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.pixels >= notification.metrics.maxScrollExtent - 750) {
+      if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
+        loadMoreProducts();
+      }
+    }
+    return false;
+  }
+
+  void _checkNeedMoreProducts() {
+    if (!hasMore.value || isLoading.value || isLoadingMore.value) return;
+    if (scrollController.hasClients && scrollController.position.maxScrollExtent < 300) {
+      loadMoreProducts();
     }
   }
 
@@ -134,10 +150,22 @@ class HomeController extends GetxController {
       totalProductsCount.value = queryRes.totalCount;
       _offset = queryRes.products.length;
       hasMore.value = allProducts.length < totalProductsCount.value;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkNeedMoreProducts();
+      });
     } catch (_) {
     } finally {
       isLoading.value = false;
     }
+  }
+
+  /// Reloads banners live when new offers are published without restarting the app
+  Future<void> refreshBanners() async {
+    try {
+      final freshBanners = await _productRepo.fetchBanners();
+      banners.assignAll(freshBanners);
+    } catch (_) {}
   }
 
   Future<void> loadMoreProducts() async {
@@ -155,6 +183,12 @@ class HomeController extends GetxController {
       totalProductsCount.value = res.totalCount;
       _offset += res.products.length;
       hasMore.value = allProducts.length < totalProductsCount.value;
+
+      if (hasMore.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _checkNeedMoreProducts();
+        });
+      }
     } catch (_) {
     } finally {
       isLoadingMore.value = false;

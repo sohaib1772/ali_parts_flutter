@@ -46,10 +46,28 @@ class ProductsController extends GetxController {
   }
 
   void _onScroll() {
-    if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 300) {
+    if (scrollController.hasClients) {
+      if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 750) {
+        if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
+          loadMoreProducts();
+        }
+      }
+    }
+  }
+
+  bool handleScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.pixels >= notification.metrics.maxScrollExtent - 750) {
       if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
         loadMoreProducts();
       }
+    }
+    return false;
+  }
+
+  void _checkNeedMoreProducts() {
+    if (!hasMore.value || isLoading.value || isLoadingMore.value) return;
+    if (scrollController.hasClients && scrollController.position.maxScrollExtent < 300) {
+      loadMoreProducts();
     }
   }
 
@@ -71,6 +89,10 @@ class ProductsController extends GetxController {
       totalCount.value = res.totalCount;
       _offset = res.products.length;
       hasMore.value = products.length < totalCount.value;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkNeedMoreProducts();
+      });
     } catch (_) {
     } finally {
       isLoading.value = false;
@@ -78,6 +100,7 @@ class ProductsController extends GetxController {
   }
 
   Future<void> loadMoreProducts() async {
+    if (isLoadingMore.value || !hasMore.value) return;
     try {
       isLoadingMore.value = true;
       final res = await _productRepo.fetchProducts(
@@ -93,6 +116,12 @@ class ProductsController extends GetxController {
       totalCount.value = res.totalCount;
       _offset += res.products.length;
       hasMore.value = products.length < totalCount.value;
+
+      if (hasMore.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _checkNeedMoreProducts();
+        });
+      }
     } catch (_) {
     } finally {
       isLoadingMore.value = false;

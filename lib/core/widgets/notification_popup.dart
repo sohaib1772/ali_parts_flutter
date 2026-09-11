@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/notification_service.dart';
 
 /// Full-screen popup overlay shown when a new notification arrives.
 /// Matches the website's `notification-popup.tsx` with a clean white modal card.
@@ -10,6 +11,7 @@ class NotificationPopup extends StatefulWidget {
   final String? body;
   final String? type;
   final String notifId;
+  final String? orderId;
 
   const NotificationPopup({
     super.key,
@@ -17,6 +19,7 @@ class NotificationPopup extends StatefulWidget {
     this.body,
     this.type,
     required this.notifId,
+    this.orderId,
   });
 
   @override
@@ -28,6 +31,7 @@ class NotificationPopup extends StatefulWidget {
     String? body,
     String? type,
     required String notifId,
+    String? orderId,
   }) {
     if (title.isEmpty) return;
     if (Get.isDialogOpen == true) return; // don't stack
@@ -38,6 +42,7 @@ class NotificationPopup extends StatefulWidget {
         body: body,
         type: type,
         notifId: notifId,
+        orderId: orderId,
       ),
       barrierDismissible: true,
       barrierColor: Colors.black.withValues(alpha: 0.70),
@@ -74,6 +79,18 @@ class _NotificationPopupState extends State<NotificationPopup>
     if (mounted && Get.isDialogOpen == true) {
       Get.back();
     }
+  }
+
+  void _viewNotification() {
+    _dismiss();
+    if (widget.notifId.isNotEmpty) {
+      Get.find<NotificationService>().markRead(widget.notifId);
+    }
+    // Use the centralized navigation handler
+    Get.find<NotificationService>().handleNotificationNavigation(
+      type: widget.type,
+      orderId: widget.orderId,
+    );
   }
 
   @override
@@ -219,28 +236,61 @@ class _NotificationPopupState extends State<NotificationPopup>
 
                 const SizedBox(height: 22),
 
-                // ── "تم" dismiss button ──────────────────────────
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: ElevatedButton(
-                    onPressed: _dismiss,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0A192F),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(100),
+                // ── Action buttons ──────────────────────────────
+                Row(
+                  children: [
+                    // "عرض" view button — navigates to the notification target
+                    if (!_isBlock) ...[
+                      Expanded(
+                        child: SizedBox(
+                          height: 46,
+                          child: OutlinedButton(
+                            onPressed: _viewNotification,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF0A192F),
+                              side: const BorderSide(color: Color(0xFFE2E8F0), width: 1.2),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(100),
+                              ),
+                            ),
+                            child: Text(
+                              'عرض',
+                              style: GoogleFonts.cairo(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    // "تم" dismiss button
+                    Expanded(
+                      child: SizedBox(
+                        height: 46,
+                        child: ElevatedButton(
+                          onPressed: _dismiss,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0A192F),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                          ),
+                          child: Text(
+                            'تم',
+                            style: GoogleFonts.cairo(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    child: Text(
-                      'تم',
-                      style: GoogleFonts.cairo(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
+                  ],
                 ),
               ],
             ),

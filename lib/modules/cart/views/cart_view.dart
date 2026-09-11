@@ -10,8 +10,15 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../data/models/cart_item_model.dart';
 
-class CartView extends StatelessWidget {
+class CartView extends StatefulWidget {
   const CartView({super.key});
+
+  @override
+  State<CartView> createState() => _CartViewState();
+}
+
+class _CartViewState extends State<CartView> {
+  bool _splitShipmentConfirmed = false;
 
   @override
   Widget build(BuildContext context) {
@@ -171,28 +178,88 @@ class CartView extends StatelessWidget {
                               if (cart.hasSplitShipment) ...[
                                 const SizedBox(height: 10),
                                 Container(
-                                  padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFFFFFBEB),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: const Color(0xFFFDE68A)),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: _splitShipmentConfirmed
+                                          ? const Color(0xFFD97706)
+                                          : const Color(0xFFFDE68A),
+                                      width: _splitShipmentConfirmed ? 1.5 : 1.0,
+                                    ),
                                   ),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 16),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(
-                                          'يتضمن طلبك ${cart.shipmentCount} شحنات منفصلة لحماية القطع الحساسة أو الكبيرة أثناء النقل، ويتم احتساب أجور توصيل مستقلة لكل شحنة.',
-                                          style: const TextStyle(
-                                            color: Color(0xFF92400E),
-                                            fontSize: 11,
-                                            height: 1.4,
-                                          ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _splitShipmentConfirmed = !_splitShipmentConfirmed;
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(14),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 18),
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    'يتضمن طلبك ${cart.shipmentCount} شحنات منفصلة لحماية القطع الحساسة أو الكبيرة أثناء النقل، ويتم احتساب أجور توصيل مستقلة لكل شحنة.',
+                                                    style: const TextStyle(
+                                                      color: Color(0xFF92400E),
+                                                      fontSize: 11.5,
+                                                      height: 1.45,
+                                                      fontWeight: FontWeight.w600,
+                                                      fontFamily: 'Cairo',
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 10),
+                                            const Divider(height: 1, color: Color(0xFFFDE68A)),
+                                            const SizedBox(height: 8),
+                                            Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 22,
+                                                  height: 22,
+                                                  child: Checkbox(
+                                                    value: _splitShipmentConfirmed,
+                                                    onChanged: (val) {
+                                                      setState(() {
+                                                        _splitShipmentConfirmed = val ?? false;
+                                                      });
+                                                    },
+                                                    activeColor: const Color(0xFFD97706),
+                                                    checkColor: Colors.white,
+                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                                                    side: const BorderSide(color: Color(0xFFD97706), width: 1.5),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                const Expanded(
+                                                  child: Text(
+                                                    'أوافق على تقسيم الشحنات واحتساب أجور التوصيل المنفصلة',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Color(0xFF92400E),
+                                                      fontFamily: 'Cairo',
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ],
@@ -232,7 +299,23 @@ class CartView extends StatelessWidget {
                           width: double.infinity,
                           height: 52,
                           child: ElevatedButton(
-                            onPressed: () => Get.toNamed(AppRoutes.checkout),
+                            onPressed: () {
+                              if (cart.hasSplitShipment && !_splitShipmentConfirmed) {
+                                Get.snackbar(
+                                  'تأكيد الشحنات',
+                                  'يرجى تأكيد الموافقة على تقسيم الشحنات للمتابعة إلى الدفع',
+                                  backgroundColor: const Color(0xFFD97706),
+                                  colorText: Colors.white,
+                                  snackPosition: SnackPosition.TOP,
+                                  margin: const EdgeInsets.all(16),
+                                  borderRadius: 14,
+                                  icon: const Icon(Icons.warning_amber_rounded, color: Colors.white),
+                                  duration: const Duration(seconds: 3),
+                                );
+                                return;
+                              }
+                              Get.toNamed(AppRoutes.checkout);
+                            },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.gold,
                               foregroundColor: const Color(0xFF0F172A),

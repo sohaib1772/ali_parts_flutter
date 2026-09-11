@@ -20,4 +20,6 @@ abstract class AppRoutes {
   static const notifications = '/notifications';
   static const replacements = '/replacements';
   static const admin = '/admin';
+  static const forceUpdate = '/force-update';
+  static const reels = '/reels';
 }

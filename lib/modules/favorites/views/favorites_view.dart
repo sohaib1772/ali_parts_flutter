@@ -68,7 +68,10 @@ class _FavoritesViewState extends State<FavoritesView> {
 
                       return GridView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
                         itemCount: favorites.favoriteProducts.length,
                         gridDelegate: ResponsiveGridHelper.getProductGridDelegate(context),
                         itemBuilder: (ctx, i) {

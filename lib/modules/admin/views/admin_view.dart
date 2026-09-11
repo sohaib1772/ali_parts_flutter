@@ -16,6 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../app/config/api_constants.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/network/dio_client.dart';
+import '../../../core/services/auth_service.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../data/models/brand_model.dart';
@@ -87,6 +88,7 @@ class _AdminViewState extends State<AdminView> {
   List<Map<String, dynamic>> _users = [];
   bool _isLoadingUsers = false;
   final TextEditingController _userSearchCtrl = TextEditingController();
+  String _userRoleFilter = 'all'; // 'all' | 'admin' | 'staff' | 'customer' | 'blocked'
 
   // Comprehensive Settings inputs
   final TextEditingController _storeNameCtrl = TextEditingController();
@@ -121,6 +123,13 @@ class _AdminViewState extends State<AdminView> {
   final TextEditingController _apiKeyHeaderCtrl = TextEditingController(text: 'Authorization');
   final TextEditingController _apiKeyCtrl = TextEditingController();
 
+  // Force Update inputs
+  final TextEditingController _minVersionAndroidCtrl = TextEditingController(text: '1.0.0');
+  final TextEditingController _minVersionIosCtrl = TextEditingController(text: '1.0.0');
+  final TextEditingController _forceUpdateMsgCtrl = TextEditingController(text: 'يرجى تحديث التطبيق إلى أحدث إصدار لمتابعة الاستخدام والتمتع بأحدث الميزات وتحسينات الأمان.');
+  final TextEditingController _playStoreUrlCtrl = TextEditingController(text: 'https://play.google.com');
+  final TextEditingController _appStoreUrlCtrl = TextEditingController(text: 'https://apps.apple.com');
+
   // Settings Images state
   String _storeLogoUrl = '';
   XFile? _localLogoFile;
@@ -132,9 +141,13 @@ class _AdminViewState extends State<AdminView> {
 
   bool _isSavingSettings = false;
 
-  // Broadcast inputs
+  // Broadcast inputs & state
   final TextEditingController _broadcastTitleCtrl = TextEditingController();
   final TextEditingController _broadcastBodyCtrl = TextEditingController();
+  String _broadcastAudience = 'all_users'; // 'all_users' | 'all_customers'
+  int _broadcastRecipientsCount = 0;
+  bool _isLoadingBroadcastCount = false;
+  bool _isSendingBroadcast = false;
 
   // Diagnostics state
   bool _isRunningDiagnostics = false;
@@ -151,13 +164,93 @@ class _AdminViewState extends State<AdminView> {
   String? _savingNotesId;
   String? _updatingStatusId;
 
+  bool _isTabPermitted(int tabIndex, bool isCurrentAdmin, Map<String, dynamic> staffPerms) {
+    if (isCurrentAdmin) return true;
+    switch (tabIndex) {
+      case 0: // منتجات
+      case 2: // تصنيفات
+      case 4: // سجل المخزون
+        return staffPerms['can_products'] == true;
+      case 1: // طلبات
+        return staffPerms['can_orders'] == true;
+      case 3: // عروض
+        return staffPerms['can_products'] == true || staffPerms['can_moderate_comments'] == true;
+      case 5: // سجل الحظر
+        return staffPerms['can_block'] == true;
+      case 7: // استبدال
+        return staffPerms['can_replacements'] == true;
+      default:
+        return false;
+    }
+  }
+
+  int? _getFirstPermittedTab(bool isCurrentAdmin, Map<String, dynamic> staffPerms) {
+    final candidateTabs = [0, 3, 2, 1, 7, 6, 5, 4, 11, 10, 9, 8];
+    for (final t in candidateTabs) {
+      if (_isTabPermitted(t, isCurrentAdmin, staffPerms)) return t;
+    }
+    return null;
+  }
+
+  void _loadDataForTab(int index) {
+    if (index == 0 && _products.isEmpty) {
+      _loadProducts();
+      _loadMetadata();
+    } else if (index == 1 && _orders.isEmpty) {
+      _loadOrders();
+    } else if (index == 2 && _categories.isEmpty) {
+      _loadMetadata();
+    } else if (index == 3 && _banners.isEmpty) {
+      _loadBanners();
+    } else if (index == 4 && _stockMovements.isEmpty) {
+      _loadStockMovements();
+    } else if (index == 5 && _blockLogs.isEmpty) {
+      _loadBlockData();
+    } else if (index == 6 && _users.isEmpty) {
+      _loadUsers();
+    } else if (index == 7 && _replacements.isEmpty) {
+      _loadReplacements();
+    } else if (index == 9 && _diagnosticsReport == null) {
+      _runDiagnostics();
+    } else if (index == 10) {
+      _initSettings();
+    } else if (index == 11) {
+      _loadBroadcastCount();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _loadProducts();
-    _loadMetadata();
-    _loadBanners();
-    _initSettings();
+    final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+    final isCurrentAdmin = auth?.isAdmin.value == true;
+    final staffPerms = auth?.staffPermissions.value ?? {};
+
+    final firstTab = _getFirstPermittedTab(isCurrentAdmin, staffPerms);
+    if (firstTab != null && !_isTabPermitted(_selectedTab, isCurrentAdmin, staffPerms)) {
+      _selectedTab = firstTab;
+    }
+
+    if (auth != null && auth.isLoggedIn.value) {
+      auth.fetchUserProfile().then((_) {
+        if (mounted) {
+          final isAdm = auth.isAdmin.value;
+          final perms = auth.staffPermissions.value ?? {};
+          if (!_isTabPermitted(_selectedTab, isAdm, perms)) {
+            final newFirst = _getFirstPermittedTab(isAdm, perms);
+            if (newFirst != null) {
+              setState(() {
+                _selectedTab = newFirst;
+              });
+              _loadDataForTab(_selectedTab);
+            }
+          }
+          setState(() {});
+        }
+      });
+    }
+
+    _loadDataForTab(_selectedTab);
   }
 
   @override
@@ -189,6 +282,11 @@ class _AdminViewState extends State<AdminView> {
     _apiBaseUrlCtrl.dispose();
     _apiKeyHeaderCtrl.dispose();
     _apiKeyCtrl.dispose();
+    _minVersionAndroidCtrl.dispose();
+    _minVersionIosCtrl.dispose();
+    _forceUpdateMsgCtrl.dispose();
+    _playStoreUrlCtrl.dispose();
+    _appStoreUrlCtrl.dispose();
     _broadcastTitleCtrl.dispose();
     _broadcastBodyCtrl.dispose();
     super.dispose();
@@ -240,6 +338,11 @@ class _AdminViewState extends State<AdminView> {
             if (map['api_base_url'] != null) _apiBaseUrlCtrl.text = map['api_base_url']!;
             if (map['api_key_header'] != null) _apiKeyHeaderCtrl.text = map['api_key_header']!;
             if (map['api_key'] != null) _apiKeyCtrl.text = map['api_key']!;
+            if (map['min_app_version_android'] != null) _minVersionAndroidCtrl.text = map['min_app_version_android']!;
+            if (map['min_app_version_ios'] != null) _minVersionIosCtrl.text = map['min_app_version_ios']!;
+            if (map['force_update_message'] != null) _forceUpdateMsgCtrl.text = map['force_update_message']!;
+            if (map['play_store_url'] != null) _playStoreUrlCtrl.text = map['play_store_url']!;
+            if (map['app_store_url'] != null) _appStoreUrlCtrl.text = map['app_store_url']!;
           });
         }
       }
@@ -743,6 +846,68 @@ class _AdminViewState extends State<AdminView> {
     }
   }
 
+  Future<void> _loadBroadcastCount() async {
+    setState(() => _isLoadingBroadcastCount = true);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final res = await dio.post(
+        ApiConstants.rpcAdminBroadcastAudienceCount,
+        data: {'p_audience': _broadcastAudience},
+      );
+      if (mounted) {
+        setState(() {
+          _broadcastRecipientsCount = (res.data is num) ? (res.data as num).toInt() : int.tryParse(res.data.toString()) ?? 0;
+          _isLoadingBroadcastCount = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingBroadcastCount = false);
+    }
+  }
+
+  Future<void> _sendBroadcast() async {
+    final title = _broadcastTitleCtrl.text.trim();
+    final body = _broadcastBodyCtrl.text.trim();
+    if (title.isEmpty) {
+      Get.snackbar('تنبيه', 'يرجى كتابة عنوان الإشعار', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+    if (_broadcastRecipientsCount == 0) {
+      Get.snackbar('تنبيه', 'لا يوجد مستلمين في هذه الشريحة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+
+    setState(() => _isSendingBroadcast = true);
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final res = await dio.post(
+        ApiConstants.rpcAdminBroadcastNotification,
+        data: {
+          'p_title': title,
+          'p_body': body,
+          'p_audience': _broadcastAudience,
+        },
+      );
+
+      final count = (res.data is num) ? (res.data as num).toInt() : int.tryParse(res.data.toString()) ?? _broadcastRecipientsCount;
+      Get.snackbar(
+        'تم الإرسال بنجاح',
+        'تم إرسال الإشعار الجماعي إلى $count مستخدم ✓',
+        backgroundColor: AppColors.inStock,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 4),
+      );
+
+      _broadcastTitleCtrl.clear();
+      _broadcastBodyCtrl.clear();
+      _loadBroadcastCount();
+    } catch (e) {
+      Get.snackbar('خطأ', 'تعذر إرسال الإشعار الجماعي', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+    } finally {
+      if (mounted) setState(() => _isSendingBroadcast = false);
+    }
+  }
+
   Future<void> _loadReplacements() async {
     setState(() => _isLoadingReplacements = true);
     try {
@@ -921,15 +1086,71 @@ class _AdminViewState extends State<AdminView> {
     setState(() => _isLoadingUsers = true);
     try {
       final dio = Get.find<DioClient>().dio;
+      // 1. Try RPC admin_get_users_list
+      try {
+        final rpcRes = await dio.post('/rest/v1/rpc/admin_get_users_list');
+        if ((rpcRes.statusCode == 200 || rpcRes.statusCode == 201) && rpcRes.data is List) {
+          if (mounted) {
+            setState(() {
+              _users = List<Map<String, dynamic>>.from(
+                (rpcRes.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
+              );
+              _isLoadingUsers = false;
+            });
+          }
+          return;
+        }
+      } catch (_) {
+        // Fallback to direct tables
+      }
+
+      // 2. Direct tables fallback
       final res = await dio.get('/rest/v1/profiles', queryParameters: {
         'select': '*',
         'order': 'created_at.desc',
       });
 
       if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
+        final rawUsers = List<Map<String, dynamic>>.from(
+          (res.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
+        );
+
+        // Fetch user_roles and staff_permissions in parallel
+        try {
+          final rolesRes = await dio.get('/rest/v1/user_roles', queryParameters: {'select': 'user_id,role'});
+          final staffRes = await dio.get('/rest/v1/staff_permissions', queryParameters: {'select': '*'});
+
+          final adminIds = <String>{};
+          if (rolesRes.data is List) {
+            for (final r in (rolesRes.data as List)) {
+              if (r['role'] == 'admin' && r['user_id'] != null) {
+                adminIds.add(r['user_id'].toString());
+              }
+            }
+          }
+          final staffMap = <String, Map<String, dynamic>>{};
+          if (staffRes.data is List) {
+            for (final s in (staffRes.data as List)) {
+              if (s['user_id'] != null) {
+                staffMap[s['user_id'].toString()] = Map<String, dynamic>.from(s as Map);
+              }
+            }
+          }
+
+          for (final u in rawUsers) {
+            final uid = u['id']?.toString() ?? '';
+            final isAdm = adminIds.contains(uid);
+            final sp = staffMap[uid];
+            final isStf = sp != null && (sp['can_orders'] == true || sp['can_products'] == true || sp['can_replacements'] == true || sp['can_block'] == true || sp['can_moderate_comments'] == true);
+            u['is_admin'] = isAdm;
+            u['is_staff'] = isStf;
+            u['staff_permissions'] = sp;
+          }
+        } catch (_) {}
+
         if (mounted) {
           setState(() {
-            _users = List<Map<String, dynamic>>.from(res.data as List);
+            _users = rawUsers;
             _isLoadingUsers = false;
           });
         }
@@ -952,72 +1173,691 @@ class _AdminViewState extends State<AdminView> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        onPressed: () => Get.back(),
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                      Text('تغيير كلمة سر: $name', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                      const SizedBox(width: 20),
-                    ],
-                  ),
-                  const Divider(height: 20),
-                  const Text('كلمة السر الجديدة', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: pwCtrl,
-                    style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
-                    decoration: InputDecoration(
-                      hintText: '6 أحرف على الأقل',
-                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                      filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('تغيير كلمة سر: $name', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                        IconButton(
+                          onPressed: () => Get.back(),
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text('سيتمكن المستخدم من تسجيل الدخول بكلمة السر الجديدة فوراً. ذكّره بها بشكل آمن.', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), height: 1.3)),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: ElevatedButton(
-                      onPressed: isSaving
-                          ? null
-                          : () async {
-                              if (pwCtrl.text.trim().length < 6) {
-                                Get.snackbar('تنبيه', 'كلمة السر يجب أن تكون 6 أحرف على الأقل', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
-                                return;
-                              }
-                              setDlgState(() => isSaving = true);
-                              await Future.delayed(const Duration(milliseconds: 500));
-                              Get.back();
-                              Get.snackbar('نجاح', 'تم تحديث كلمة السر بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0A192F),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    const Divider(height: 20),
+                    const Text('كلمة السر الجديدة', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: pwCtrl,
+                      style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+                      decoration: InputDecoration(
+                        hintText: '6 أحرف على الأقل',
+                        hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                        filled: true,
+                        fillColor: const Color(0xFFF8FAFC),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
                       ),
-                      child: isSaving
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('حفظ كلمة السر الجديدة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    const Text('سيتمكن المستخدم من تسجيل الدخول بكلمة السر الجديدة فوراً. ذكّره بها بشكل آمن.', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), height: 1.3)),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: ElevatedButton(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                if (pwCtrl.text.trim().length < 6) {
+                                  Get.snackbar('تنبيه', 'كلمة السر يجب أن تكون 6 أحرف على الأقل', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                  return;
+                                }
+                                setDlgState(() => isSaving = true);
+                                await Future.delayed(const Duration(milliseconds: 500));
+                                Get.back();
+                                Get.snackbar('نجاح', 'تم تحديث كلمة السر بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0A192F),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isSaving
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('حفظ كلمة السر الجديدة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         },
+      ),
+    );
+  }
+
+  void _showChangeUserRoleDialog(Map<String, dynamic> user) {
+    final userId = user['id']?.toString() ?? '';
+    final currentAdminId = Get.isRegistered<AuthService>() ? Get.find<AuthService>().currentUser.value?.id : null;
+    final isSelf = currentAdminId != null && currentAdminId == userId;
+
+    final name = user['full_name'] as String? ?? user['phone'] as String? ?? user['email'] as String? ?? (userId.length >= 8 ? userId.substring(0, 8) : userId);
+    
+    // Determine initial role
+    String selectedRole = 'user';
+    if (user['is_admin'] == true) {
+      selectedRole = 'admin';
+    } else if (user['is_staff'] == true) {
+      selectedRole = 'staff';
+    }
+
+    final staffPerms = user['staff_permissions'] is Map ? Map<String, dynamic>.from(user['staff_permissions'] as Map) : <String, dynamic>{};
+    bool canOrders = staffPerms['can_orders'] == true;
+    bool canProducts = staffPerms['can_products'] == true;
+    bool canReplacements = staffPerms['can_replacements'] == true;
+    bool canBlock = staffPerms['can_block'] == true;
+    bool canModerateComments = staffPerms['can_moderate_comments'] == true;
+    bool isSaving = false;
+
+    Get.dialog(
+      StatefulBuilder(
+        builder: (context, setDlgState) {
+          return Dialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0A192F).withValues(alpha: 0.08),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.admin_panel_settings_rounded, color: Color(0xFF0A192F), size: 22),
+                            ),
+                            const SizedBox(width: 10),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('تعديل الرتبة والصلاحيات', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                                Text(name, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                              ],
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          onPressed: () => Get.back(),
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 24),
+
+                    if (isSelf)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'أنت تقوم بتعديل حسابك الإداري الحالي. لا يمكنك إزالة صفة الإدارة عن نفسك لمنع إغلاق النظام.',
+                                style: TextStyle(fontSize: 11.5, color: Color(0xFF92400E), height: 1.3),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    const Text('اختر الرتبة:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 10),
+
+                    // 1. Admin Option
+                    _buildRoleOptionCard(
+                      title: '👑 مدير النظام (Admin)',
+                      subtitle: 'صلاحيات كاملة وغير محدودة للتحكم بجميع أقسام التطبيق ولوحة الإدارة.',
+                      value: 'admin',
+                      groupValue: selectedRole,
+                      activeColor: const Color(0xFFD97706),
+                      onTap: isSelf ? null : () => setDlgState(() => selectedRole = 'admin'),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // 2. Staff Option
+                    _buildRoleOptionCard(
+                      title: '🛡️ موظف (Staff)',
+                      subtitle: 'تخصيص صلاحيات محددة فقط لإدارة الطلبات، المنتجات، الاستبدال، أو الحظر.',
+                      value: 'staff',
+                      groupValue: selectedRole,
+                      activeColor: const Color(0xFF2563EB),
+                      onTap: isSelf ? null : () => setDlgState(() => selectedRole = 'staff'),
+                    ),
+
+                    // Staff Permissions Sub-Checkboxes
+                    if (selectedRole == 'staff') ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'حدد الصلاحيات الممنوحة للموظف:',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            ),
+                            const SizedBox(height: 6),
+                            _buildPermCheckbox(
+                              title: '📦 إدارة الطلبات وحالاتها',
+                              value: canOrders,
+                              onChanged: (v) => setDlgState(() => canOrders = v ?? false),
+                            ),
+                            _buildPermCheckbox(
+                              title: '🏷️ إدارة المنتجات والمخزون والتصنيفات',
+                              value: canProducts,
+                              onChanged: (v) => setDlgState(() => canProducts = v ?? false),
+                            ),
+                            _buildPermCheckbox(
+                              title: '🔄 إدارة طلبات الاستبدال والضمان',
+                              value: canReplacements,
+                              onChanged: (v) => setDlgState(() => canReplacements = v ?? false),
+                            ),
+                            _buildPermCheckbox(
+                              title: '🚫 حظر وفك حظر المستخدمين',
+                              value: canBlock,
+                              onChanged: (v) => setDlgState(() => canBlock = v ?? false),
+                            ),
+                            _buildPermCheckbox(
+                              title: '💬 مراقبة والتحكم بتعليقات الإعلانات',
+                              value: canModerateComments,
+                              onChanged: (v) => setDlgState(() => canModerateComments = v ?? false),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 8),
+
+                    // 3. Customer Option
+                    _buildRoleOptionCard(
+                      title: '👤 زبون عادي (Customer)',
+                      subtitle: 'مستخدم عادي بدون أي صلاحيات وصول إلى لوحة الإدارة.',
+                      value: 'user',
+                      groupValue: selectedRole,
+                      activeColor: const Color(0xFF64748B),
+                      onTap: isSelf ? null : () => setDlgState(() => selectedRole = 'user'),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Get.back(),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              side: const BorderSide(color: Color(0xFFCBD5E1)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('إلغاء', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton(
+                            onPressed: (isSaving || (isSelf && selectedRole != 'admin'))
+                                ? null
+                                : () async {
+                                    setDlgState(() => isSaving = true);
+                                    try {
+                                      final dio = Get.find<DioClient>().dio;
+                                      
+                                      // Call RPC
+                                      bool rpcSuccess = false;
+                                      try {
+                                        final res = await dio.post(
+                                          '/rest/v1/rpc/admin_set_user_role',
+                                          data: {
+                                            'p_user_id': userId,
+                                            'p_role_type': selectedRole,
+                                            'p_can_orders': selectedRole == 'staff' ? canOrders : false,
+                                            'p_can_products': selectedRole == 'staff' ? canProducts : false,
+                                            'p_can_replacements': selectedRole == 'staff' ? canReplacements : false,
+                                            'p_can_block': selectedRole == 'staff' ? canBlock : false,
+                                            'p_can_moderate_comments': selectedRole == 'staff' ? canModerateComments : false,
+                                          },
+                                        );
+                                        if (res.statusCode == 200 || res.statusCode == 204) {
+                                          rpcSuccess = true;
+                                        }
+                                      } catch (_) {
+                                        // Fallback via direct tables
+                                      }
+
+                                      if (!rpcSuccess) {
+                                        // Fallback logic
+                                        if (selectedRole == 'admin') {
+                                          await dio.post('/rest/v1/user_roles', data: {'user_id': userId, 'role': 'admin'});
+                                          await dio.delete('/rest/v1/staff_permissions', queryParameters: {'user_id': 'eq.$userId'});
+                                        } else if (selectedRole == 'staff') {
+                                          await dio.delete('/rest/v1/user_roles', queryParameters: {'user_id': 'eq.$userId', 'role': 'eq.admin'});
+                                          await dio.post(
+                                            '/rest/v1/staff_permissions',
+                                            data: {
+                                              'user_id': userId,
+                                              'full_name': name,
+                                              'can_orders': canOrders,
+                                              'can_products': canProducts,
+                                              'can_replacements': canReplacements,
+                                              'can_block': canBlock,
+                                              'can_moderate_comments': canModerateComments,
+                                            },
+                                            options: Options(headers: {'Prefer': 'resolution=merge-duplicates'}),
+                                          );
+                                        } else {
+                                          await dio.delete('/rest/v1/user_roles', queryParameters: {'user_id': 'eq.$userId'});
+                                          await dio.delete('/rest/v1/staff_permissions', queryParameters: {'user_id': 'eq.$userId'});
+                                        }
+                                      }
+
+                                      // Update local list
+                                      if (mounted) {
+                                        setState(() {
+                                          user['is_admin'] = (selectedRole == 'admin');
+                                          user['is_staff'] = (selectedRole == 'staff');
+                                          user['staff_permissions'] = selectedRole == 'staff'
+                                              ? {
+                                                  'can_orders': canOrders,
+                                                  'can_products': canProducts,
+                                                  'can_replacements': canReplacements,
+                                                  'can_block': canBlock,
+                                                  'can_moderate_comments': canModerateComments,
+                                                }
+                                              : null;
+                                        });
+                                      }
+
+                                      Get.back();
+                                      Get.snackbar('نجاح', 'تم تحديث رتبة وصلاحيات المستخدم بنجاح ✓', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                                    } catch (e) {
+                                      setDlgState(() => isSaving = false);
+                                      Get.snackbar('خطأ', 'تعذر تحديث الصلاحيات: $e', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0A192F),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: isSaving
+                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Text('حفظ التغييرات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDeleteUserDialog(Map<String, dynamic> user) {
+    final userId = user['id']?.toString() ?? '';
+    final currentAdminId = Get.isRegistered<AuthService>() ? Get.find<AuthService>().currentUser.value?.id : null;
+    final isSelf = currentAdminId != null && currentAdminId == userId;
+
+    if (isSelf) {
+      Get.snackbar('تنبيه', 'لا يمكنك حذف حسابك الإداري الحالي المسجل به الدخول.', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+      return;
+    }
+
+    final name = user['full_name'] as String? ?? user['phone'] as String? ?? user['email'] as String? ?? (userId.length >= 8 ? userId.substring(0, 8) : userId);
+    final phone = user['phone'] as String? ?? '';
+    final email = user['email'] as String? ?? '';
+    bool isDeleting = false;
+
+    Get.dialog(
+      StatefulBuilder(
+        builder: (context, setDlgState) {
+          return Dialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Danger header
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFFEE2E2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.delete_forever_rounded, color: Color(0xFFDC2626), size: 24),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('حذف حساب المستخدم نهائياً', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF991B1B))),
+                              Text('إجراء نهائي لا يمكن التراجع عنه', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626))),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 24),
+
+                    // User summary card
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.person_outline_rounded, size: 16, color: Color(0xFF64748B)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                              ),
+                            ],
+                          ),
+                          if (phone.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(Icons.phone_outlined, size: 14, color: Color(0xFF64748B)),
+                                const SizedBox(width: 6),
+                                Text(phone, style: const TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontFamily: 'monospace')),
+                              ],
+                            ),
+                          ],
+                          if (email.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(Icons.email_outlined, size: 14, color: Color(0xFF64748B)),
+                                const SizedBox(width: 6),
+                                Text(email, style: const TextStyle(fontSize: 11.5, color: Color(0xFF475569))),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // Explanation Note
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFEDD5)),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, color: Color(0xFFC2410C), size: 16),
+                              SizedBox(width: 6),
+                              Text('ماذا سيحدث بعد الحذف؟', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFFC2410C))),
+                            ],
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            '• سيتم حذف بيانات الدخول والملف الشخصي للمستخدم نهائياً.\n• ستبقى سجلات الطلبات السابقة محفوظة للأرشفة المالية متضمنة اسم العميل ورقم هاتفه.',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF9A3412), height: 1.4),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: isDeleting ? null : () => Get.back(),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              side: const BorderSide(color: Color(0xFFCBD5E1)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('إلغاء', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton(
+                            onPressed: isDeleting
+                                ? null
+                                : () async {
+                                    setDlgState(() => isDeleting = true);
+                                    try {
+                                      final dio = Get.find<DioClient>().dio;
+                                      await dio.post(
+                                        '/rest/v1/rpc/admin_delete_user',
+                                        data: {'p_user_id': userId},
+                                      );
+
+                                      if (mounted) {
+                                        setState(() {
+                                          _users.removeWhere((u) => u['id']?.toString() == userId);
+                                        });
+                                      }
+
+                                      Get.back();
+                                      Get.snackbar(
+                                        'تم الحذف بنجاح',
+                                        'تم حذف حساب المستخدم نهائياً من قاعدة البيانات ✓',
+                                        backgroundColor: AppColors.inStock,
+                                        colorText: Colors.white,
+                                      );
+                                    } catch (e) {
+                                      setDlgState(() => isDeleting = false);
+                                      String errMsg = 'تعذر حذف الحساب';
+                                      if (e is DioException && e.response?.data != null) {
+                                        final d = e.response!.data;
+                                        if (d is Map && d['message'] != null) {
+                                          errMsg = d['message'].toString();
+                                        }
+                                      }
+                                      Get.snackbar('خطأ', errMsg, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFDC2626),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: isDeleting
+                                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Text('نعم، احذف الحساب', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildRoleOptionCard({
+    required String title,
+    required String subtitle,
+    required String value,
+    required String groupValue,
+    required Color activeColor,
+    required VoidCallback? onTap,
+  }) {
+    final isSelected = value == groupValue;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSelected ? activeColor.withValues(alpha: 0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? activeColor : const Color(0xFFE2E8F0),
+            width: isSelected ? 1.8 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isSelected ? activeColor : const Color(0xFF94A3B8),
+                  width: 2,
+                ),
+              ),
+              child: isSelected
+                  ? Center(
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: activeColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF334155),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), height: 1.3),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPermCheckbox({
+    required String title,
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+  }) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: Checkbox(
+                value: value,
+                onChanged: onChanged,
+                activeColor: const Color(0xFF2563EB),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontSize: 12, color: Color(0xFF334155), fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1125,6 +1965,11 @@ class _AdminViewState extends State<AdminView> {
         {'key': 'api_base_url', 'value': _apiBaseUrlCtrl.text.trim()},
         {'key': 'api_key_header', 'value': _apiKeyHeaderCtrl.text.trim()},
         {'key': 'api_key', 'value': _apiKeyCtrl.text.trim()},
+        {'key': 'min_app_version_android', 'value': _minVersionAndroidCtrl.text.trim().isNotEmpty ? _minVersionAndroidCtrl.text.trim() : '1.0.0'},
+        {'key': 'min_app_version_ios', 'value': _minVersionIosCtrl.text.trim().isNotEmpty ? _minVersionIosCtrl.text.trim() : '1.0.0'},
+        {'key': 'force_update_message', 'value': _forceUpdateMsgCtrl.text.trim()},
+        {'key': 'play_store_url', 'value': _playStoreUrlCtrl.text.trim()},
+        {'key': 'app_store_url', 'value': _appStoreUrlCtrl.text.trim()},
       ];
 
       for (final u in updates) {
@@ -1507,118 +2352,249 @@ class _AdminViewState extends State<AdminView> {
                         controller: _scrollController,
                         padding: const EdgeInsets.fromLTRB(0, 10, 0, 90),
                         children: [
-                    // 1. Subheader Accordion: صلاحياتي (5 مفعلة)
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.02),
-                            blurRadius: 6,
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          InkWell(
-                            onTap: () => setState(() => _showPermissions = !_showPermissions),
-                            borderRadius: BorderRadius.circular(18),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Icon(
-                                    _showPermissions ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
-                                    color: const Color(0xFF64748B),
-                                    size: 26,
-                                  ),
-                                  const Row(
-                                    children: [
-                                      Text(
-                                        '(5 مفعلة)',
-                                        style: TextStyle(fontSize: 12, color: Color(0xFF0D9488), fontWeight: FontWeight.bold),
-                                      ),
-                                      SizedBox(width: 6),
-                                      Text(
-                                        'صلاحياتي',
-                                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
-                                      ),
-                                      SizedBox(width: 8),
-                                      Icon(IconsaxPlusBold.security_safe, color: Color(0xFF0D9488), size: 20),
-                                    ],
+                          // 1. Subheader Accordion: صلاحياتي
+                          Builder(builder: (context) {
+                            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+                            final isCurrentAdmin = auth?.isAdmin.value == true;
+                            final staffPerms = auth?.staffPermissions.value ?? {};
+
+                            int activeCount = 0;
+                            if (isCurrentAdmin) {
+                              activeCount = 5;
+                            } else {
+                              if (staffPerms['can_orders'] == true) activeCount++;
+                              if (staffPerms['can_products'] == true) activeCount++;
+                              if (staffPerms['can_replacements'] == true) activeCount++;
+                              if (staffPerms['can_block'] == true) activeCount++;
+                              if (staffPerms['can_moderate_comments'] == true) activeCount++;
+                            }
+
+                            return Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 16),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.02),
+                                    blurRadius: 6,
                                   ),
                                 ],
                               ),
-                            ),
-                          ),
-
-                          if (_showPermissions)
-                            Container(
-                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                               child: Column(
                                 children: [
-                                  const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                                  const SizedBox(height: 10),
-                                  _buildPermissionPill('مدير', const Color(0xFF1E293B), const Color(0xFFF8FAFC), const Color(0xFFCBD5E1)),
-                                  const SizedBox(height: 6),
-                                  _buildPermissionPill('الطلبات (can_orders)', const Color(0xFF2563EB), const Color(0xFFEFF6FF), const Color(0xFF93C5FD)),
-                                  const SizedBox(height: 6),
-                                  _buildPermissionPill('المنتجات (can_products)', const Color(0xFF059669), const Color(0xFFECFDF5), const Color(0xFFA7F3D0)),
-                                  const SizedBox(height: 6),
-                                  _buildPermissionPill('الاستبدال (can_replacements)', const Color(0xFFD97706), const Color(0xFFFFFBEB), const Color(0xFFFDE68A)),
-                                  const SizedBox(height: 6),
-                                  _buildPermissionPill('حظر المستخدمين (can_block)', const Color(0xFFE11D48), const Color(0xFFFFF1F2), const Color(0xFFFECDD3)),
+                                  InkWell(
+                                    onTap: () => setState(() => _showPermissions = !_showPermissions),
+                                    borderRadius: BorderRadius.circular(18),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Icon(
+                                            _showPermissions ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
+                                            color: const Color(0xFF64748B),
+                                            size: 26,
+                                          ),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                '($activeCount مفعلة)',
+                                                style: const TextStyle(fontSize: 12, color: Color(0xFF0D9488), fontWeight: FontWeight.bold),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                isCurrentAdmin ? 'صلاحياتي (مدير النظام)' : 'صلاحياتي (موظف)',
+                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              const Icon(IconsaxPlusBold.security_safe, color: Color(0xFF0D9488), size: 20),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+
+                                  if (_showPermissions)
+                                    Container(
+                                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                                      child: Column(
+                                        children: [
+                                          const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                                          const SizedBox(height: 10),
+                                          if (isCurrentAdmin) ...[
+                                            _buildPermissionPill(
+                                              'مدير النظام (👑 كامل الصلاحيات والتحكم)',
+                                              const Color(0xFF1E293B),
+                                              const Color(0xFFF8FAFC),
+                                              const Color(0xFFCBD5E1),
+                                              isActive: true,
+                                            ),
+                                          ] else ...[
+                                            if (staffPerms['can_orders'] == true) ...[
+                                              _buildPermissionPill(
+                                                'الطلبات (can_orders)',
+                                                const Color(0xFF2563EB),
+                                                const Color(0xFFEFF6FF),
+                                                const Color(0xFF93C5FD),
+                                                isActive: true,
+                                              ),
+                                              const SizedBox(height: 6),
+                                            ],
+                                            if (staffPerms['can_products'] == true) ...[
+                                              _buildPermissionPill(
+                                                'المنتجات (can_products)',
+                                                const Color(0xFF059669),
+                                                const Color(0xFFECFDF5),
+                                                const Color(0xFFA7F3D0),
+                                                isActive: true,
+                                              ),
+                                              const SizedBox(height: 6),
+                                            ],
+                                            if (staffPerms['can_replacements'] == true) ...[
+                                              _buildPermissionPill(
+                                                'الاستبدال (can_replacements)',
+                                                const Color(0xFFD97706),
+                                                const Color(0xFFFFFBEB),
+                                                const Color(0xFFFDE68A),
+                                                isActive: true,
+                                              ),
+                                              const SizedBox(height: 6),
+                                            ],
+                                            if (staffPerms['can_block'] == true) ...[
+                                              _buildPermissionPill(
+                                                'حظر المستخدمين (can_block)',
+                                                const Color(0xFFE11D48),
+                                                const Color(0xFFFFF1F2),
+                                                const Color(0xFFFECDD3),
+                                                isActive: true,
+                                              ),
+                                              const SizedBox(height: 6),
+                                            ],
+                                            if (staffPerms['can_moderate_comments'] == true) ...[
+                                              _buildPermissionPill(
+                                                'إدارة التعليقات والعروض (can_moderate_comments)',
+                                                const Color(0xFF7C3AED),
+                                                const Color(0xFFF5F3FF),
+                                                const Color(0xFFDDD6FE),
+                                                isActive: true,
+                                              ),
+                                            ],
+                                            if (activeCount == 0)
+                                              const Padding(
+                                                padding: EdgeInsets.symmetric(vertical: 8),
+                                                child: Text(
+                                                  'لا توجد صلاحيات مفعلة لحسابك حالياً',
+                                                  style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               ),
-                            ),
-                        ],
-                      ),
-                    ),
+                            );
+                          }),
 
-                    const SizedBox(height: 12),
+                          const SizedBox(height: 12),
 
-                    // 2. 12-Item Tab Grid (Matching Website RTL orientation)
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 16),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: GridView.count(
-                        crossAxisCount: 4,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisSpacing: 6,
-                        mainAxisSpacing: 6,
-                        childAspectRatio: 1.1,
-                        children: [
-                          _buildTabButton(0, IconsaxPlusBold.box, IconsaxPlusLinear.box, 'منتجات'),
-                          _buildTabButton(3, IconsaxPlusBold.gallery, IconsaxPlusLinear.gallery, 'عروض'),
-                          _buildTabButton(2, IconsaxPlusBold.tag, IconsaxPlusLinear.tag, 'تصنيفات'),
-                          _buildTabButton(1, IconsaxPlusBold.clipboard_text, IconsaxPlusLinear.clipboard_text, 'طلبات'),
-                          _buildTabButton(7, IconsaxPlusBold.convert, IconsaxPlusLinear.convert, 'استبدال'),
-                          _buildTabButton(6, IconsaxPlusBold.profile_2user, IconsaxPlusLinear.profile_2user, 'مستخدمون'),
-                          _buildTabButton(5, IconsaxPlusBold.user_remove, IconsaxPlusLinear.user_remove, 'سجل الحظر'),
-                          _buildTabButton(4, IconsaxPlusBold.archive_book, IconsaxPlusLinear.archive_book, 'سجل المخزون'),
-                          _buildTabButton(11, IconsaxPlusBold.notification_bing, IconsaxPlusLinear.notification_bing, 'إشعار جماعي'),
-                          _buildTabButton(10, IconsaxPlusBold.setting_2, IconsaxPlusLinear.setting_2, 'إعدادات'),
-                          _buildTabButton(9, IconsaxPlusBold.status_up, IconsaxPlusLinear.status_up, 'تشخيص'),
-                          _buildTabButton(8, IconsaxPlusBold.key, IconsaxPlusLinear.key, 'سجل OTP'),
-                        ],
-                      ),
-                    ),
+                          // 2. Dynamic Tab Grid
+                          Builder(builder: (context) {
+                            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+                            final isCurrentAdmin = auth?.isAdmin.value == true;
+                            final staffPerms = auth?.staffPermissions.value ?? {};
 
-                    const SizedBox(height: 14),
+                            final List<Widget> permittedTabButtons = [];
+                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
+                              permittedTabButtons.add(_buildTabButton(0, IconsaxPlusBold.box, IconsaxPlusLinear.box, 'منتجات'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_products'] == true || staffPerms['can_moderate_comments'] == true) {
+                              permittedTabButtons.add(_buildTabButton(3, IconsaxPlusBold.gallery, IconsaxPlusLinear.gallery, 'عروض'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
+                              permittedTabButtons.add(_buildTabButton(2, IconsaxPlusBold.tag, IconsaxPlusLinear.tag, 'تصنيفات'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_orders'] == true) {
+                              permittedTabButtons.add(_buildTabButton(1, IconsaxPlusBold.clipboard_text, IconsaxPlusLinear.clipboard_text, 'طلبات'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_replacements'] == true) {
+                              permittedTabButtons.add(_buildTabButton(7, IconsaxPlusBold.convert, IconsaxPlusLinear.convert, 'استبدال'));
+                            }
+                            if (isCurrentAdmin) {
+                              permittedTabButtons.add(_buildTabButton(6, IconsaxPlusBold.profile_2user, IconsaxPlusLinear.profile_2user, 'مستخدمون'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_block'] == true) {
+                              permittedTabButtons.add(_buildTabButton(5, IconsaxPlusBold.user_remove, IconsaxPlusLinear.user_remove, 'سجل الحظر'));
+                            }
+                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
+                              permittedTabButtons.add(_buildTabButton(4, IconsaxPlusBold.archive_book, IconsaxPlusLinear.archive_book, 'سجل المخزون'));
+                            }
+                            if (isCurrentAdmin) {
+                              permittedTabButtons.add(_buildTabButton(11, IconsaxPlusBold.notification_bing, IconsaxPlusLinear.notification_bing, 'إشعار جماعي'));
+                              permittedTabButtons.add(_buildTabButton(10, IconsaxPlusBold.setting_2, IconsaxPlusLinear.setting_2, 'إعدادات'));
+                              permittedTabButtons.add(_buildTabButton(9, IconsaxPlusBold.status_up, IconsaxPlusLinear.status_up, 'تشخيص'));
+                              permittedTabButtons.add(_buildTabButton(8, IconsaxPlusBold.key, IconsaxPlusLinear.key, 'سجل OTP'));
+                            }
 
-                    // 3. Tab Content
-                    _buildActiveTabContent(),
+                            if (permittedTabButtons.isEmpty) {
+                              return Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.all(24),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: const Column(
+                                  children: [
+                                    Icon(IconsaxPlusBold.shield_cross, size: 40, color: Color(0xFFE11D48)),
+                                    SizedBox(height: 10),
+                                    Text(
+                                      'لا تملك صلاحيات كافية للوصول إلى أقسام لوحة الإدارة',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                                    ),
+                                    SizedBox(height: 6),
+                                    Text(
+                                      'يرجى مراجعة مدير النظام لتفعيل الصلاحيات المطلوبة لحسابك.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
 
-                    const SizedBox(height: 30),
+                            final crossCount = permittedTabButtons.length < 4 ? permittedTabButtons.length : 4;
+
+                            return Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 16),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: GridView.count(
+                                crossAxisCount: crossCount,
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                crossAxisSpacing: 6,
+                                mainAxisSpacing: 6,
+                                childAspectRatio: 1.1,
+                                children: permittedTabButtons,
+                              ),
+                            );
+                          }),
+
+                          const SizedBox(height: 14),
+
+                          // 3. Tab Content
+                          _buildActiveTabContent(),
+
+                          const SizedBox(height: 30),
                   ],
                 ),
 
@@ -1639,7 +2615,12 @@ class _AdminViewState extends State<AdminView> {
 );
 }
 
-  Widget _buildPermissionPill(String title, Color textColor, Color bgColor, Color borderColor) {
+  Widget _buildPermissionPill(String title, Color textColor, Color bgColor, Color borderColor, {bool isActive = true}) {
+    if (!isActive) {
+      textColor = const Color(0xFF94A3B8);
+      bgColor = const Color(0xFFF8FAFC);
+      borderColor = const Color(0xFFE2E8F0);
+    }
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -1651,7 +2632,11 @@ class _AdminViewState extends State<AdminView> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(IconsaxPlusBold.tick_circle, color: textColor, size: 16),
+          Icon(
+            isActive ? IconsaxPlusBold.tick_circle : IconsaxPlusLinear.close_circle,
+            color: textColor,
+            size: 16,
+          ),
           const SizedBox(width: 6),
           Text(
             title,
@@ -1667,14 +2652,7 @@ class _AdminViewState extends State<AdminView> {
     return InkWell(
       onTap: () {
         setState(() => _selectedTab = index);
-        if (index == 1 && _orders.isEmpty) _loadOrders();
-        if (index == 2 && _categories.isEmpty) _loadMetadata();
-        if (index == 3 && _banners.isEmpty) _loadBanners();
-        if (index == 4 && _stockMovements.isEmpty) _loadStockMovements();
-        if (index == 5 && _blockLogs.isEmpty) _loadBlockData();
-        if (index == 6 && _users.isEmpty) _loadUsers();
-        if (index == 7 && _replacements.isEmpty) _loadReplacements();
-        if (index == 9 && _diagnosticsReport == null) _runDiagnostics();
+        _loadDataForTab(index);
       },
       borderRadius: BorderRadius.circular(14),
       child: Container(
@@ -2331,17 +3309,19 @@ class _AdminViewState extends State<AdminView> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: () => _deleteReplacement(id),
-                              icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 20),
-                              padding: const EdgeInsets.all(8),
-                              constraints: const BoxConstraints(),
-                              style: IconButton.styleFrom(
-                                backgroundColor: const Color(0xFFFFF1F2),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value) ...[
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: () => _deleteReplacement(id),
+                                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 20),
+                                padding: const EdgeInsets.all(8),
+                                constraints: const BoxConstraints(),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFFF1F2),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ],
@@ -2356,6 +3336,42 @@ class _AdminViewState extends State<AdminView> {
   }
 
   Widget _buildActiveTabContent() {
+    final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+    final isCurrentAdmin = auth?.isAdmin.value == true;
+    final staffPerms = auth?.staffPermissions.value ?? {};
+
+    if (!_isTabPermitted(_selectedTab, isCurrentAdmin, staffPerms)) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFF1F2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(IconsaxPlusBold.shield_cross, size: 36, color: Color(0xFFE11D48)),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'لا تملك صلاحية للوصول إلى هذا القسم',
+                style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'يرجى التواصل مع مدير النظام لمنحك الصلاحيات اللازمة',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     switch (_selectedTab) {
       case 0:
         return _buildProductsTab();
@@ -2385,15 +3401,283 @@ class _AdminViewState extends State<AdminView> {
             padding: const EdgeInsets.symmetric(vertical: 30),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.build_circle_outlined, size: 44, color: Color(0xFF94A3B8)),
-                const SizedBox(height: 10),
-                const Text('هذا القسم قيد التحديث في لوحة الإدارة', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+              children: const [
+                Icon(Icons.build_circle_outlined, size: 44, color: Color(0xFF94A3B8)),
+                SizedBox(height: 10),
+                Text('هذا القسم قيد التحديث في لوحة الإدارة', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
               ],
             ),
           ),
         );
     }
+  }
+
+  Widget _buildBroadcastTab() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.gold.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(IconsaxPlusBold.notification_bing, color: AppColors.gold, size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'إرسال إشعار جماعي (Push Notification)',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+                    ),
+                    Text(
+                      'يصل داخلياً فوراً ويرسل تنبيهاً خارجياً لجميع أجهزة Android و iOS',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: Color(0xFFF1F5F9)),
+          const SizedBox(height: 16),
+
+          // Audience selector
+          const Text(
+            'الجمهور المستهدف',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF334155), fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _broadcastAudience,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'all_users',
+                    child: Text(
+                      'جميع المستخدمين والزبائن (يشمل الإدارة للتجربة)',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'all_customers',
+                    child: Text(
+                      'الزبائن والعملاء فقط (بدون حسابات الإدارة)',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+                    ),
+                  ),
+                ],
+                onChanged: _isSendingBroadcast
+                    ? null
+                    : (val) {
+                        if (val != null) {
+                          setState(() => _broadcastAudience = val);
+                          _loadBroadcastCount();
+                        }
+                      },
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Title input
+          const Text(
+            'عنوان الإشعار *',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF334155), fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _broadcastTitleCtrl,
+            maxLength: 80,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 13.5, color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontFamily: 'Cairo'),
+            decoration: InputDecoration(
+              hintText: 'مثال: وصلت قطع غيار جديدة ومميزة 🎉',
+              hintStyle: const TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.gold, width: 1.5)),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Body input
+          const Text(
+            'نص الإشعار (اختياري)',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF334155), fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _broadcastBodyCtrl,
+            maxLines: 3,
+            maxLength: 300,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A), fontFamily: 'Cairo'),
+            decoration: InputDecoration(
+              hintText: 'تصفح أحدث القطع المتوفرة الآن في التطبيق بأفضل الأسعار...',
+              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.gold, width: 1.5)),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Recipients Summary Card
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFDE68A)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.people_alt_rounded, size: 18, color: Color(0xFFD97706)),
+                    const SizedBox(width: 8),
+                    _isLoadingBroadcastCount
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFD97706)))
+                        : Text(
+                            'المستلمون: $_broadcastRecipientsCount مستخدم',
+                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309), fontFamily: 'Cairo'),
+                          ),
+                  ],
+                ),
+                IconButton(
+                  onPressed: _loadBroadcastCount,
+                  icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFFD97706)),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Send Button
+          SizedBox(
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: (_isSendingBroadcast || _broadcastTitleCtrl.text.trim().isEmpty || _broadcastRecipientsCount == 0)
+                  ? null
+                  : () => _confirmAndSendBroadcast(),
+              icon: _isSendingBroadcast
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(IconsaxPlusBold.send_1, size: 18, color: Colors.white),
+              label: Text(
+                _isSendingBroadcast ? 'جاري الإرسال…' : 'إرسال الإشعار لـ $_broadcastRecipientsCount مستخدم',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, fontFamily: 'Cairo', color: Colors.white),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A192F),
+                disabledBackgroundColor: const Color(0xFF94A3B8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmAndSendBroadcast() {
+    final title = _broadcastTitleCtrl.text.trim();
+    final body = _broadcastBodyCtrl.text.trim();
+
+    Get.dialog(
+      AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(IconsaxPlusBold.notification_bing, color: AppColors.gold, size: 22),
+            SizedBox(width: 8),
+            Text('تأكيد الإرسال الجماعي', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, fontFamily: 'Cairo')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'سيتم إرسال هذا الإشعار وتنبيه Push خارجي إلى $_broadcastRecipientsCount مستخدم. هل أنت متأكد؟',
+              style: const TextStyle(fontSize: 13, color: Color(0xFF334155), fontFamily: 'Cairo', height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A), fontFamily: 'Cairo')),
+                  if (body.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(body, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: const Text('تراجع', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Get.back();
+              _sendBroadcast();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0A192F), foregroundColor: Colors.white),
+            child: const Text('تأكيد الإرسال الآن', style: TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildProductsTab() {
@@ -2794,20 +4078,21 @@ class _AdminViewState extends State<AdminView> {
                 '${filtered.length} طلب معروض',
                 style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
               ),
-              OutlinedButton.icon(
-                onPressed: _showDeleteAllOrdersDialog,
-                icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFDC2626)),
-                label: const Text(
-                  'حذف جميع الطلبات',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+              if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value)
+                OutlinedButton.icon(
+                  onPressed: _showDeleteAllOrdersDialog,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                  label: const Text(
+                    'حذف جميع الطلبات',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFFECDD3)),
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
                 ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFFECDD3)),
-                  backgroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                ),
-              ),
             ],
           ),
 
@@ -3414,42 +4699,60 @@ class _AdminViewState extends State<AdminView> {
           const SizedBox(height: 10),
 
           // Ban Customer Button (Pink / Red)
-          if (userId.isNotEmpty)
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: OutlinedButton.icon(
-                onPressed: _togglingBlockUserId == userId ? null : () => _toggleBlockUser(userId, isBlocked),
-                icon: Icon(isBlocked ? Icons.lock_open_rounded : Icons.block_rounded, size: 18, color: const Color(0xFFDC2626)),
-                label: Text(
-                  isBlocked ? 'رفع الحظر عن الزبون' : 'حظر الزبون من الطلبات',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
-                ),
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFF1F2),
-                  side: const BorderSide(color: Color(0xFFFECDD3)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          Builder(builder: (context) {
+            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+            final isAdm = auth?.isAdmin.value == true;
+            final perms = auth?.staffPermissions.value ?? {};
+            final canBlock = isAdm || perms['can_block'] == true;
+
+            if (!canBlock || userId.isEmpty) return const SizedBox.shrink();
+
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  onPressed: _togglingBlockUserId == userId ? null : () => _toggleBlockUser(userId, isBlocked),
+                  icon: Icon(isBlocked ? Icons.lock_open_rounded : Icons.block_rounded, size: 18, color: const Color(0xFFDC2626)),
+                  label: Text(
+                    isBlocked ? 'رفع الحظر عن الزبون' : 'حظر الزبون من الطلبات',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFF1F2),
+                    side: const BorderSide(color: Color(0xFFFECDD3)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
                 ),
               ),
-            ),
+            );
+          }),
 
-          const SizedBox(height: 10),
+          // Delete Single Order Button (Pink / Red) - Admin only
+          Builder(builder: (context) {
+            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+            final isAdm = auth?.isAdmin.value == true;
+            if (!isAdm) return const SizedBox.shrink();
 
-          // Delete Single Order Button (Pink / Red)
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: OutlinedButton.icon(
-              onPressed: () => _deleteSingleOrder(orderId),
-              icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFDC2626)),
-              label: const Text('حذف الطلب نهائياً', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFFFFF1F2),
-                side: const BorderSide(color: Color(0xFFFECDD3)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  onPressed: () => _deleteSingleOrder(orderId),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFDC2626)),
+                  label: const Text('حذف الطلب نهائياً', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFF1F2),
+                    side: const BorderSide(color: Color(0xFFFECDD3)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          }),
         ],
       ),
     );
@@ -3752,23 +5055,39 @@ class _AdminViewState extends State<AdminView> {
     }
   }
 
-  Future<void> _shareInvoiceAsImage(GlobalKey key, String orderNum) async {
+  Future<void> _shareInvoiceAsImage(GlobalKey key, String orderNum, [BuildContext? context]) async {
     try {
       final boundary = key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) return;
+      if (boundary == null) {
+        Get.snackbar('تنبيه', 'تعذر قراءة صورة الفاتورة للمشاركة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+        return;
+      }
 
       final image = await boundary.toImage(pixelRatio: 3.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) return;
+      if (byteData == null) {
+        Get.snackbar('خطأ', 'تعذر تحويل الفاتورة إلى صورة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+        return;
+      }
 
       final pngBytes = byteData.buffer.asUint8List();
       final tempDir = await getTemporaryDirectory();
       final file = await File('${tempDir.path}/invoice_$orderNum.png').create();
       await file.writeAsBytes(pngBytes);
 
+      Rect? origin;
+      if (context != null && context.mounted) {
+        final box = context.findRenderObject() as RenderBox?;
+        if (box != null && box.hasSize) {
+          origin = box.localToGlobal(Offset.zero) & box.size;
+        }
+      }
+      origin ??= Rect.fromLTWH(0, 0, Get.width, Get.height / 2);
+
       await Share.shareXFiles(
-        [XFile(file.path)],
-        text: 'فاتورة طلب #$orderNum - ${_settings.storeName.isNotEmpty ? _settings.storeName : "مكتب علي شوفرليت وكاديلاك"}',
+        [XFile(file.path, mimeType: 'image/png')],
+        text: 'فاتورة طلب #$orderNum - علي شيفروليت',
+        sharePositionOrigin: origin,
       );
     } catch (e) {
       Get.snackbar('خطأ', 'تعذر مشاركة صورة الفاتورة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
@@ -3866,29 +5185,12 @@ class _AdminViewState extends State<AdminView> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Store Branding
-                              Center(
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: const BoxDecoration(color: Color(0xFF0A192F), shape: BoxShape.circle),
-                                      child: const Icon(IconsaxPlusBold.car, color: AppColors.gold, size: 24),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      _settings.storeName.isNotEmpty ? _settings.storeName : 'مكتب علي شوفرليت وكاديلاك',
-                                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, fontFamily: 'Cairo', color: Color(0xFF0A192F)),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    Text(
-                                      _settings.storeTagline.isNotEmpty ? _settings.storeTagline : 'قطع غيار أصلية ومضمونة',
-                                      style: const TextStyle(fontSize: 11, fontFamily: 'Cairo', color: Color(0xFF64748B)),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
+                              // Store Branding Header Image (Sharp corners)
+                              Image.asset(
+                                'assets/images/invoice_header.jpg',
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
                               ),
 
                               const SizedBox(height: 14),
@@ -4096,7 +5398,7 @@ class _AdminViewState extends State<AdminView> {
                                 ? null
                                 : () async {
                                     setDlgState(() => isSharing = true);
-                                    await _shareInvoiceAsImage(invoiceKey, orderNum);
+                                    await _shareInvoiceAsImage(invoiceKey, orderNum, context);
                                     if (context.mounted) {
                                       setDlgState(() => isSharing = false);
                                     }
@@ -4782,7 +6084,7 @@ class _AdminViewState extends State<AdminView> {
                       ),
                     const SizedBox(height: 4),
                     const Text(
-                      'عند وجود فيديو سيعرض بدل الصورة، والصورة تُستخدم كصورة أولية.',
+                      'يمكنك نشر صورة فقط، أو فيديو فقط، أو كلاهما معاً.',
                       style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
                     ),
 
@@ -4811,12 +6113,7 @@ class _AdminViewState extends State<AdminView> {
                             ? null
                             : () async {
                                 if (currentImageUrl.isEmpty && pickedImageBytes == null && currentVideoUrl.isEmpty && pickedVideoBytes == null) {
-                                  Get.snackbar('تنبيه', 'الصورة أو الفيديو مطلوب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
-                                  return;
-                                }
-
-                                if ((currentVideoUrl.isNotEmpty || pickedVideoBytes != null) && currentImageUrl.isEmpty && pickedImageBytes == null) {
-                                  Get.snackbar('تنبيه', 'صورة الغلاف مطلوبة مع الفيديو', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                  Get.snackbar('تنبيه', 'يجب اختيار صورة أو فيديو على الأقل', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
                                   return;
                                 }
 
@@ -5030,7 +6327,13 @@ class _AdminViewState extends State<AdminView> {
                                     placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
                                     errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 30)),
                                   )
-                                : const Center(child: Icon(Icons.photo_library_outlined, color: Colors.white38, size: 36)),
+                                : Center(
+                                    child: Icon(
+                                      hasVideo ? Icons.videocam_rounded : Icons.photo_library_outlined,
+                                      color: Colors.white38,
+                                      size: 36,
+                                    ),
+                                  ),
                           ),
                           if (hasVideo)
                             Positioned(
@@ -5807,17 +7110,42 @@ class _AdminViewState extends State<AdminView> {
 
   Widget _buildUsersTab() {
     final search = _userSearchCtrl.text.trim().toLowerCase();
+    final currentAdminId = Get.isRegistered<AuthService>() ? Get.find<AuthService>().currentUser.value?.id : null;
+
     final filtered = _users.where((u) {
+      // 1. Role filter
+      if (_userRoleFilter == 'admin' && u['is_admin'] != true) return false;
+      if (_userRoleFilter == 'staff' && (u['is_staff'] != true || u['is_admin'] == true)) return false;
+      if (_userRoleFilter == 'customer' && (u['is_admin'] == true || u['is_staff'] == true)) return false;
+      if (_userRoleFilter == 'blocked' && u['is_blocked'] != true) return false;
+
+      // 2. Search filter
       if (search.isEmpty) return true;
       final name = (u['full_name'] as String? ?? '').toLowerCase();
       final phone = (u['phone'] as String? ?? '').toLowerCase();
       final email = (u['email'] as String? ?? '').toLowerCase();
-      return name.contains(search) || phone.contains(search) || email.contains(search);
+      final id = (u['id'] as String? ?? '').toLowerCase();
+      return name.contains(search) || phone.contains(search) || email.contains(search) || id.contains(search);
     }).toList();
 
     int activeCount = 0;
+    int adminCount = 0;
+    int staffCount = 0;
+    int customerCount = 0;
+    int blockedCount = 0;
     final now = DateTime.now();
+
     for (final u in _users) {
+      if (u['is_admin'] == true) {
+        adminCount++;
+      } else if (u['is_staff'] == true) {
+        staffCount++;
+      } else {
+        customerCount++;
+      }
+      if (u['is_blocked'] == true) {
+        blockedCount++;
+      }
       final updatedStr = u['created_at'];
       if (updatedStr != null) {
         try {
@@ -5836,11 +7164,12 @@ class _AdminViewState extends State<AdminView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Top Summary Cards
             Row(
               children: [
                 Expanded(
                   child: Container(
-                    height: 102,
+                    height: 98,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
@@ -5867,9 +7196,12 @@ class _AdminViewState extends State<AdminView> {
                         ),
                         Text(
                           '${_users.length}',
-                          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white, height: 1.1),
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, height: 1.1),
                         ),
-                        const SizedBox(height: 10),
+                        Text(
+                          '$adminCount مدير • $staffCount موظف',
+                          style: TextStyle(fontSize: 9.5, color: Colors.white.withValues(alpha: 0.7)),
+                        ),
                       ],
                     ),
                   ),
@@ -5877,7 +7209,7 @@ class _AdminViewState extends State<AdminView> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Container(
-                    height: 102,
+                    height: 98,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
@@ -5900,14 +7232,14 @@ class _AdminViewState extends State<AdminView> {
                       children: [
                         Text(
                           'متصلون الآن',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A).withValues(alpha: 0.75)),
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A).withValues(alpha: 0.8)),
                         ),
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Text(
                               '$activeCount',
-                              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), height: 1.1),
+                              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), height: 1.1),
                             ),
                             const SizedBox(width: 6),
                             Container(
@@ -5921,7 +7253,7 @@ class _AdminViewState extends State<AdminView> {
                           ],
                         ),
                         Text(
-                          'آخر دخول خلال 15 دقيقة',
+                          'آخر نشاط خلال 15 دقيقة',
                           style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, color: const Color(0xFF0F172A).withValues(alpha: 0.7)),
                         ),
                       ],
@@ -5931,6 +7263,29 @@ class _AdminViewState extends State<AdminView> {
               ],
             ),
             const SizedBox(height: 12),
+
+            // Filter Chips
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildUserFilterChip(label: 'الكل (${_users.length})', value: 'all'),
+                  const SizedBox(width: 8),
+                  _buildUserFilterChip(label: '👑 المدراء ($adminCount)', value: 'admin', activeColor: const Color(0xFFD97706)),
+                  const SizedBox(width: 8),
+                  _buildUserFilterChip(label: '🛡️ الموظفون ($staffCount)', value: 'staff', activeColor: const Color(0xFF2563EB)),
+                  const SizedBox(width: 8),
+                  _buildUserFilterChip(label: '👤 الزبائن ($customerCount)', value: 'customer', activeColor: const Color(0xFF64748B)),
+                  if (blockedCount > 0) ...[
+                    const SizedBox(width: 8),
+                    _buildUserFilterChip(label: '🚫 المحظورون ($blockedCount)', value: 'blocked', activeColor: const Color(0xFFDC2626)),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Search Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
@@ -5947,12 +7302,21 @@ class _AdminViewState extends State<AdminView> {
                       controller: _userSearchCtrl,
                       onChanged: (_) => setState(() {}),
                       style: const TextStyle(fontSize: 12.5),
-                      decoration: const InputDecoration(
-                        hintText: '...ابحث بالاسم أو الهاتف أو الإيميل',
-                        hintStyle: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      decoration: InputDecoration(
+                        hintText: '...ابحث بالاسم، الهاتف، الإيميل أو المعرف',
+                        hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                         border: InputBorder.none,
                         isDense: true,
-                        contentPadding: EdgeInsets.symmetric(vertical: 8),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        suffixIcon: _userSearchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded, size: 16, color: Color(0xFF94A3B8)),
+                                onPressed: () {
+                                  _userSearchCtrl.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
                       ),
                     ),
                   ),
@@ -5972,6 +7336,8 @@ class _AdminViewState extends State<AdminView> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // List Content
             if (_isLoadingUsers && _users.isEmpty)
               const Padding(padding: EdgeInsets.symmetric(vertical: 30), child: Center(child: CircularProgressIndicator(color: AppColors.gold)))
             else if (filtered.isEmpty)
@@ -5983,97 +7349,361 @@ class _AdminViewState extends State<AdminView> {
                   border: Border.all(color: const Color(0xFFE2E8F0)),
                 ),
                 alignment: Alignment.center,
-                child: const Text('لا يوجد مستخدمون مطابقون', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+                child: Column(
+                  children: [
+                    const Icon(Icons.person_off_rounded, size: 36, color: Color(0xFF94A3B8)),
+                    const SizedBox(height: 8),
+                    const Text('لا يوجد مستخدمون مطابقون', style: TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.bold)),
+                    if (_userRoleFilter != 'all' || _userSearchCtrl.text.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      TextButton(
+                        onPressed: () {
+                          _userSearchCtrl.clear();
+                          setState(() => _userRoleFilter = 'all');
+                        },
+                        child: const Text('إعادة ضبط التصفية', style: TextStyle(fontSize: 12, color: Color(0xFF2563EB))),
+                      ),
+                    ],
+                  ],
+                ),
               )
             else
               ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: filtered.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final u = filtered[index];
-                  final name = u['full_name'] as String? ?? 'بلا اسم';
+                  final userId = u['id']?.toString() ?? '';
+                  final name = u['full_name'] as String? ?? 'بدون اسم';
                   final phone = u['phone'] as String?;
                   final email = u['email'] as String?;
+                  final avatarUrl = u['avatar_url'] as String?;
                   final isBlocked = u['is_blocked'] == true;
+                  final isAdmin = u['is_admin'] == true;
+                  final isStaff = u['is_staff'] == true && !isAdmin;
+                  final staffPerms = u['staff_permissions'] is Map ? Map<String, dynamic>.from(u['staff_permissions'] as Map) : null;
+                  final points = (u['points_balance'] is num) ? (u['points_balance'] as num).toInt() : 0;
                   final createdAt = u['created_at'];
-                  final initial = (name.isNotEmpty && name != 'بلا اسم' ? name[0] : (email != null && email.isNotEmpty ? email[0] : '?')).toUpperCase();
+                  final isSelf = currentAdminId != null && currentAdminId == userId;
 
-                  final displayContact = (phone != null && phone.isNotEmpty)
-                      ? (phone.startsWith('+') ? phone : '+$phone')
-                      : (email ?? '—');
+                  final initial = (name.isNotEmpty && name != 'بدون اسم' ? name[0] : (email != null && email.isNotEmpty ? email[0] : '?')).toUpperCase();
+
+                  final displayPhone = (phone != null && phone.isNotEmpty) ? (phone.startsWith('+') ? phone : '+$phone') : null;
 
                   return Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      border: Border.all(
+                        color: isAdmin
+                            ? const Color(0xFFFDE68A)
+                            : isStaff
+                                ? const Color(0xFFBFDBFE)
+                                : const Color(0xFFE2E8F0),
+                        width: (isAdmin || isStaff) ? 1.5 : 1,
+                      ),
                       boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 4),
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 6, offset: const Offset(0, 2)),
                       ],
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFF1F5F9),
-                            shape: BoxShape.circle,
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            initial,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF475569)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                        // Top row: Avatar + Name & Role + IsSelf badge
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Avatar
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: isAdmin
+                                    ? const Color(0xFFFEF3C7)
+                                    : isStaff
+                                        ? const Color(0xFFDBEAFE)
+                                        : const Color(0xFFF1F5F9),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: isAdmin
+                                      ? const Color(0xFFF59E0B)
+                                      : isStaff
+                                          ? const Color(0xFF3B82F6)
+                                          : const Color(0xFFCBD5E1),
+                                  width: 1.5,
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: avatarUrl != null && avatarUrl.isNotEmpty
+                                  ? ClipOval(
+                                      child: CachedNetworkImage(
+                                        imageUrl: avatarUrl,
+                                        width: 46,
+                                        height: 46,
+                                        fit: BoxFit.cover,
+                                        errorWidget: (_, __, ___) => Text(initial, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                                      ),
+                                    )
+                                  : Text(
+                                      initial,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                        color: isAdmin
+                                            ? const Color(0xFFB45309)
+                                            : isStaff
+                                                ? const Color(0xFF1D4ED8)
+                                                : const Color(0xFF475569),
+                                      ),
                                     ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                                        ),
+                                      ),
+                                      if (isSelf) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF0A192F),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: const Text('أنت', style: TextStyle(fontSize: 9.5, color: Colors.white, fontWeight: FontWeight.bold)),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (isBlocked) ...[
-                                    const SizedBox(width: 4),
-                                    const Icon(Icons.block_rounded, size: 14, color: Color(0xFFDC2626)),
-                                  ],
+                                  const SizedBox(height: 4),
+
+                                  // Role & Status Badges
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 4,
+                                    children: [
+                                      if (isAdmin)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFEF3C7),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFFDE68A)),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('👑', style: TextStyle(fontSize: 11)),
+                                              SizedBox(width: 4),
+                                              Text('مدير النظام', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309))),
+                                            ],
+                                          ),
+                                        )
+                                      else if (isStaff)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEFF6FF),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFBFDBFE)),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('🛡️', style: TextStyle(fontSize: 11)),
+                                              SizedBox(width: 4),
+                                              Text('موظف', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8))),
+                                            ],
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF1F5F9),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                                          ),
+                                          child: const Text('👤 زبون عادي', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
+                                        ),
+
+                                      if (isBlocked)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFEE2E2),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFFECDD3)),
+                                          ),
+                                          child: const Text('🚫 محظور', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+                                        ),
+
+                                      if (points > 0)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFFFBEB),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: const Color(0xFFFDE68A)),
+                                          ),
+                                          child: Text('⭐ $points نقطة', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
+                                        ),
+                                    ],
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                displayContact,
-                                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'monospace'),
+                            ),
+                          ],
+                        ),
+
+                        // Staff permission mini tags
+                        if (isStaff && staffPerms != null) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: [
+                                const Text('صلاحيات:', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF475569))),
+                                if (staffPerms['can_orders'] == true)
+                                  _buildMiniPermTag('طلبات 📦'),
+                                if (staffPerms['can_products'] == true)
+                                  _buildMiniPermTag('منتجات 🏷️'),
+                                if (staffPerms['can_replacements'] == true)
+                                  _buildMiniPermTag('استبدال 🔄'),
+                                if (staffPerms['can_block'] == true)
+                                  _buildMiniPermTag('حظر 🚫'),
+                                if (staffPerms['can_moderate_comments'] == true)
+                                  _buildMiniPermTag('تعليقات 💬'),
+                              ],
+                            ),
+                          ),
+                        ],
+
+                        const SizedBox(height: 10),
+
+                        // Contact info (Phone / Email / Date)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (displayPhone != null)
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.phone_outlined, size: 12, color: Color(0xFF64748B)),
+                                          const SizedBox(width: 4),
+                                          Text(displayPhone, style: const TextStyle(fontSize: 11, color: Color(0xFF334155), fontFamily: 'monospace')),
+                                        ],
+                                      ),
+                                    if (email != null && email.isNotEmpty)
+                                      Padding(
+                                        padding: EdgeInsets.only(top: displayPhone != null ? 2 : 0),
+                                        child: Row(
+                                          children: [
+                                            const Icon(Icons.email_outlined, size: 12, color: Color(0xFF64748B)),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                email,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 11, color: Color(0xFF334155)),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 3),
                               Text(
-                                'آخر دخول: ${_formatDateTime(createdAt)}',
+                                _formatDateTime(createdAt),
                                 style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: () => _showChangePasswordDialog(u),
-                          icon: const Icon(Icons.key_rounded, size: 14, color: Color(0xFFD97706)),
-                          label: const Text('كلمة السر', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFFDE68A)),
-                            backgroundColor: const Color(0xFFFFFBEB),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
+
+                        const SizedBox(height: 12),
+
+                        // Action Buttons Bar
+                        Row(
+                          children: [
+                            // 1. Change Role / Permissions
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () => _showChangeUserRoleDialog(u),
+                                icon: const Icon(Icons.admin_panel_settings_rounded, size: 14),
+                                label: const Text('الصلاحيات', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A192F),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  elevation: 0,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // 2. Change Password
+                            OutlinedButton.icon(
+                              onPressed: () => _showChangePasswordDialog(u),
+                              icon: const Icon(Icons.key_rounded, size: 14, color: Color(0xFFD97706)),
+                              label: const Text('كلمة السر', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Color(0xFFFDE68A)),
+                                backgroundColor: const Color(0xFFFFFBEB),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // 3. Delete Account
+                            IconButton(
+                              onPressed: isSelf ? null : () => _showDeleteUserDialog(u),
+                              icon: Icon(
+                                Icons.delete_forever_rounded,
+                                size: 18,
+                                color: isSelf ? const Color(0xFFCBD5E1) : const Color(0xFFDC2626),
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor: isSelf ? const Color(0xFFF1F5F9) : const Color(0xFFFEE2E2),
+                                padding: const EdgeInsets.all(8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              tooltip: isSelf ? 'لا يمكنك حذف حسابك الحالي' : 'حذف الحساب نهائياً',
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -6083,6 +7713,51 @@ class _AdminViewState extends State<AdminView> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildUserFilterChip({
+    required String label,
+    required String value,
+    Color activeColor = const Color(0xFF0A192F),
+  }) {
+    final isSelected = _userRoleFilter == value;
+    return InkWell(
+      onTap: () => setState(() => _userRoleFilter = value),
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? activeColor : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? activeColor : const Color(0xFFCBD5E1),
+          ),
+          boxShadow: isSelected
+              ? [BoxShadow(color: activeColor.withValues(alpha: 0.25), blurRadius: 4, offset: const Offset(0, 2))]
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            color: isSelected ? Colors.white : const Color(0xFF475569),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniPermTag(String title) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE2E8F0),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(title, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, color: Color(0xFF334155))),
     );
   }
 
@@ -6462,6 +8137,73 @@ class _AdminViewState extends State<AdminView> {
               ),
             ),
 
+            const SizedBox(height: 16),
+
+            // 13. Force Update Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(IconsaxPlusBold.refresh_circle, color: Color(0xFFD97706), size: 18),
+                      SizedBox(width: 6),
+                      Text('إعدادات التحديث الإجباري (Force Update)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'عند تعيين رقم إصدار أعلى من إصدار التطبيق لدى الزبون، سيظهر له تنبيه إجباري يمنعه من استخدام التطبيق ويوجهه للمتجر فوراً للتحديث.',
+                    style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B), height: 1.4),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('أقل إصدار للأندرويد', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                            const SizedBox(height: 6),
+                            _buildSettingInput(_minVersionAndroidCtrl, placeholder: '1.0.0'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('أقل إصدار للآيفون', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                            const SizedBox(height: 6),
+                            _buildSettingInput(_minVersionIosCtrl, placeholder: '1.0.0'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('رابط Google Play Store', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                  const SizedBox(height: 6),
+                  _buildSettingInput(_playStoreUrlCtrl, placeholder: 'https://play.google.com/store/apps/details?id=...'),
+                  const SizedBox(height: 10),
+                  const Text('رابط Apple App Store', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                  const SizedBox(height: 6),
+                  _buildSettingInput(_appStoreUrlCtrl, placeholder: 'https://apps.apple.com/app/id...'),
+                  const SizedBox(height: 10),
+                  const Text('رسالة التحديث الإجباري', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                  const SizedBox(height: 6),
+                  _buildSettingInput(_forceUpdateMsgCtrl, maxLines: 2, placeholder: 'يرجى تحديث التطبيق إلى أحدث إصدار لمتابعة الاستخدام...'),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 20),
 
             // Master Save Button
@@ -6492,305 +8234,6 @@ class _AdminViewState extends State<AdminView> {
             const SizedBox(height: 20),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildBroadcastTab() {
-    final titleTrimmed = _broadcastTitleCtrl.text.trim();
-    final bodyTrimmed = _broadcastBodyCtrl.text.trim();
-    final recipients = _users.isNotEmpty ? _users.length : 49;
-    final canSubmit = titleTrimmed.isNotEmpty;
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.02),
-                blurRadius: 6,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.campaign_outlined, color: Color(0xFFD97706), size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'إرسال إشعار لجميع العملاء',
-                    style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'يصل الإشعار داخل التطبيق فوراً لكل عميل، ويظهر في جرس الإشعارات. لا يمكن التراجع بعد الإرسال.',
-                style: TextStyle(color: Color(0xFF64748B), fontSize: 12, height: 1.4),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'العنوان',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _broadcastTitleCtrl,
-                maxLength: 80,
-                onChanged: (_) => setState(() {}),
-                style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
-                decoration: InputDecoration(
-                  hintText: 'وصلت قطع جديدة 🎉',
-                  hintStyle: const TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
-                  counterText: '${titleTrimmed.length}/80',
-                  counterStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'نص الرسالة (اختياري)',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _broadcastBodyCtrl,
-                maxLines: 4,
-                maxLength: 300,
-                onChanged: (_) => setState(() {}),
-                style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
-                decoration: InputDecoration(
-                  hintText: 'تفقّد أحدث قطع الغيار المتوفرة الآن في المتجر.',
-                  hintStyle: const TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
-                  counterText: '${bodyTrimmed.length}/300',
-                  counterStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  RichText(
-                    text: TextSpan(
-                      style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
-                      children: [
-                        const TextSpan(text: 'سيتم الإرسال إلى '),
-                        TextSpan(
-                          text: '$recipients',
-                          style: const TextStyle(color: Color(0xFFD97706), fontWeight: FontWeight.w900),
-                        ),
-                        const TextSpan(text: ' عميل'),
-                      ],
-                    ),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: canSubmit ? () => _showBroadcastConfirmDialog(titleTrimmed, bodyTrimmed, recipients) : null,
-                    icon: const Icon(Icons.campaign_rounded, size: 16),
-                    label: const Text('مراجعة وإرسال', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF475569),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: const Color(0xFFCBD5E1),
-                      disabledForegroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showBroadcastConfirmDialog(String title, String body, int recipients) {
-    final confirmCtrl = TextEditingController();
-    bool isSending = false;
-
-    Get.dialog(
-      StatefulBuilder(
-        builder: (context, setDlgState) {
-          final isWordCorrect = confirmCtrl.text.trim() == 'إرسال';
-
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-              title: const Text(
-                'تأكيد الإرسال الجماعي',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    RichText(
-                      text: TextSpan(
-                        style: const TextStyle(fontSize: 12.5, color: Color(0xFF475569)),
-                        children: [
-                          const TextSpan(text: 'سيصل هذا الإشعار إلى '),
-                          TextSpan(
-                            text: '$recipients عميل ',
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                          ),
-                          const TextSpan(text: 'ولا يمكن التراجع عنه.'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
-                          ),
-                          if (body.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              body,
-                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    RichText(
-                      text: const TextSpan(
-                        style: TextStyle(fontSize: 12, color: Color(0xFF475569)),
-                        children: [
-                          TextSpan(text: 'اكتب «'),
-                          TextSpan(
-                            text: 'إرسال',
-                            style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                          ),
-                          TextSpan(text: '» للتأكيد:'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: confirmCtrl,
-                      onChanged: (_) => setDlgState(() {}),
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        hintText: 'إرسال',
-                        filled: true,
-                        fillColor: const Color(0xFFF1F5F9),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Get.back(),
-                  child: const Text('إلغاء', style: TextStyle(color: Color(0xFF64748B))),
-                ),
-                ElevatedButton(
-                  onPressed: (!isWordCorrect || isSending)
-                      ? null
-                      : () async {
-                          setDlgState(() => isSending = true);
-                          try {
-                            final dio = Get.find<DioClient>().dio;
-                            try {
-                              await dio.post(
-                                '/rest/v1/rpc/admin_broadcast_notification',
-                                data: {
-                                  'p_title': title,
-                                  'p_body': body,
-                                  'p_audience': 'all_customers',
-                                },
-                              );
-                            } catch (_) {
-                              await dio.post(
-                                '/rest/v1/notifications',
-                                data: {
-                                  'title': title,
-                                  'body': body,
-                                  'type': 'broadcast',
-                                },
-                              );
-                            }
-
-                            Get.back();
-                            _broadcastTitleCtrl.clear();
-                            _broadcastBodyCtrl.clear();
-                            setState(() {});
-                            Get.snackbar(
-                              'تم الإرسال بنجاح',
-                              'تم إرسال الإشعار إلى $recipients عميل',
-                              backgroundColor: AppColors.inStock,
-                              colorText: Colors.white,
-                              snackPosition: SnackPosition.TOP,
-                            );
-                          } catch (e) {
-                            Get.snackbar('خطأ', 'تعذر إرسال الإشعار', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
-                          } finally {
-                            setDlgState(() => isSending = false);
-                          }
-                        },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A192F),
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFFE2E8F0),
-                    disabledForegroundColor: const Color(0xFF94A3B8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: isSending
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text('تأكيد الإرسال', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                ),
-              ],
-            ),
-          );
-        },
       ),
     );
   }

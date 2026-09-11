@@ -341,7 +341,10 @@ class _OrdersViewState extends State<OrdersView> {
                       color: AppColors.gold,
                       child: ListView.separated(
                         controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
                         itemCount: _orders.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 14),
                         itemBuilder: (ctx, i) {

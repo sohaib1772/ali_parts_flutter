@@ -24,6 +24,8 @@ import '../../modules/addresses/views/addresses_view.dart';
 import '../../modules/notifications/views/notifications_view.dart';
 import '../../modules/replacements/views/replacements_view.dart';
 import '../../modules/admin/views/admin_view.dart';
+import '../../modules/force_update/views/force_update_view.dart';
+import '../../modules/reels/views/reels_view.dart';
 import 'app_routes.dart';
 
 class AppPages {
@@ -141,6 +143,16 @@ class AppPages {
       name: AppRoutes.admin,
       page: () => const AdminView(),
       transition: Transition.fade,
+    ),
+    GetPage(
+      name: AppRoutes.forceUpdate,
+      page: () => const ForceUpdateView(),
+      transition: Transition.fade,
+    ),
+    GetPage(
+      name: AppRoutes.reels,
+      page: () => const ReelsView(),
+      transition: Transition.fadeIn,
     ),
     GetPage(
       name: '/auth',

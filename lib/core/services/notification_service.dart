@@ -13,6 +13,11 @@ import '../network/dio_client.dart';
 import '../utils/app_logger.dart';
 import '../widgets/notification_popup.dart';
 import 'secure_storage_service.dart';
+import '../../app/routes/app_routes.dart';
+import '../../data/repositories/order_repository.dart';
+import '../../modules/orders/views/order_details_view.dart';
+import '../../modules/main_nav/controllers/main_nav_controller.dart';
+import '../../modules/home/controllers/home_controller.dart';
 
 class NotificationService extends GetxService with WidgetsBindingObserver {
   final FlutterLocalNotificationsPlugin _plugin =
@@ -27,6 +32,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   RealtimeClient? _realtimeClient;
   RealtimeChannel? _notifChannel;
   RealtimeChannel? _ordersChannel;
+  RealtimeChannel? _bannersChannel;
   String? _currentUserId;
 
   // ── Orders stream (orders_view listens to this) ─────────────────
@@ -36,6 +42,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
   // ── FCM token refresh subscription ──────────────────────────────
   StreamSubscription<String>? _tokenRefreshSub;
+
+  // ── Cold start pending notification data ────────────────────────
+  Map<String, dynamic>? _pendingColdStartData;
 
   // ──────────────────────────────────────────────────────────────────
   // Initialization
@@ -61,8 +70,36 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     // 2. FCM foreground listener
     FirebaseMessaging.onMessage.listen(_handleForegroundFcm);
 
-    // 3. Request notification permission
+    // 2b. FCM background tap — user tapped a push while app was backgrounded
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleFcmMessageTap);
+
+    // 2c. Cold start detection — user launched app from local notification or FCM push
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp == true &&
+        launchDetails?.notificationResponse?.payload != null) {
+      try {
+        _pendingColdStartData = jsonDecode(
+            launchDetails!.notificationResponse!.payload!) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+
+    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null && initialMessage.data.isNotEmpty) {
+      _pendingColdStartData = initialMessage.data;
+    }
+
+    // 3. Request notification permission & configure iOS presentation
     await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      announcement: false,
+      badge: true,
+      carPlay: false,
+      criticalAlert: false,
+      provisional: false,
+      sound: true,
+    );
+
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
@@ -154,6 +191,22 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         );
     _ordersChannel!.subscribe();
 
+    // ── Channel: banners (Live reload banners on home) ────────────
+    _bannersChannel = _realtimeClient!
+        .channel('public-banners')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'banners',
+          callback: (_) {
+            AppLogger.d('Realtime banners table update detected');
+            if (Get.isRegistered<HomeController>()) {
+              Get.find<HomeController>().refreshBanners();
+            }
+          },
+        );
+    _bannersChannel!.subscribe();
+
     // ── FCM token registration ────────────────────────────────────
     await registerFcmToken();
 
@@ -173,6 +226,10 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     if (_ordersChannel != null) {
       _realtimeClient?.removeChannel(_ordersChannel!);
       _ordersChannel = null;
+    }
+    if (_bannersChannel != null) {
+      _realtimeClient?.removeChannel(_bannersChannel!);
+      _bannersChannel = null;
     }
     _realtimeClient?.disconnect();
     _realtimeClient = null;
@@ -296,6 +353,13 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       notifications.insert(0, row);
     }
 
+    // If promo notification, reload banners immediately so they appear live
+    if (row['type'] == 'promo') {
+      if (Get.isRegistered<HomeController>()) {
+        Get.find<HomeController>().refreshBanners();
+      }
+    }
+
     // Only show system tray notification if not already shown
     if (title.isNotEmpty) {
       final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title);
@@ -317,6 +381,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       body: body,
       type: row['type'] as String?,
       notifId: row['id'] as String? ?? '',
+      orderId: orderId.isNotEmpty ? orderId : null,
     );
   }
 
@@ -368,6 +433,19 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   // ──────────────────────────────────────────────────────────────────
   Future<void> registerFcmToken() async {
     try {
+      // On iOS, APNs token must be resolved before FCM token can be generated
+      if (Platform.isIOS) {
+        String? apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+        if (apnsToken == null) {
+          // Retry for up to 3 seconds for APNs registration to complete
+          for (var i = 0; i < 3; i++) {
+            await Future.delayed(const Duration(seconds: 1));
+            apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+            if (apnsToken != null) break;
+          }
+        }
+      }
+
       final fcmToken = await FirebaseMessaging.instance.getToken();
       if (fcmToken == null || fcmToken.isEmpty) return;
 
@@ -401,11 +479,147 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   }
 
   // ──────────────────────────────────────────────────────────────────
-  // Notification tap handler
+  // Notification tap handler (local tray notification tapped)
   // ──────────────────────────────────────────────────────────────────
   void _onNotificationTap(NotificationResponse response) {
     AppLogger.d('Notification tapped: ${response.payload}');
-    // Navigation could be added here based on payload
+    if (response.payload == null || response.payload!.isEmpty) return;
+    try {
+      final data = jsonDecode(response.payload!) as Map<String, dynamic>;
+      handleNotificationNavigation(
+        type: data['type'] as String?,
+        orderId: data['order_id'] as String?,
+        productId: data['product_id'] as String?,
+        bannerId: data['banner_id'] as String?,
+      );
+    } catch (e) {
+      AppLogger.e('Failed to parse notification payload', e);
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // FCM message tap handler (push tapped while backgrounded/terminated)
+  // ──────────────────────────────────────────────────────────────────
+  void _handleFcmMessageTap(RemoteMessage message) {
+    AppLogger.d('FCM message tap: ${message.data}');
+    handleNotificationNavigation(
+      type: message.data['type'] as String?,
+      orderId: message.data['order_id'] as String?,
+      productId: message.data['product_id'] as String?,
+      bannerId: message.data['banner_id'] as String?,
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Centralized notification deep-link navigation
+  // ──────────────────────────────────────────────────────────────────
+  Future<void> handleNotificationNavigation({
+    String? type,
+    String? orderId,
+    String? productId,
+    String? bannerId,
+  }) async {
+    AppLogger.d('Navigating for notification: type=$type, orderId=$orderId, productId=$productId, bannerId=$bannerId');
+
+    // Fallback: if type is missing but orderId is provided, treat as order_status
+    final resolvedType = (type == null || type.isEmpty)
+        ? (orderId != null && orderId.isNotEmpty ? 'order_status' : '')
+        : type;
+
+    switch (resolvedType) {
+      case 'order_status':
+        if (orderId != null && orderId.isNotEmpty) {
+          try {
+            if (Get.isRegistered<OrderRepository>()) {
+              final repo = Get.find<OrderRepository>();
+              final order = await repo.fetchOrderById(orderId);
+              if (order != null) {
+                Get.to(
+                  () => OrderDetailsView(order: order),
+                  transition: Transition.fade,
+                );
+                return;
+              }
+            }
+          } catch (e) {
+            AppLogger.e('Failed to fetch order for notification', e);
+          }
+          // Fallback: go to orders list
+          Get.toNamed(AppRoutes.orders);
+        } else {
+          Get.toNamed(AppRoutes.orders);
+        }
+        break;
+
+      case 'promo':
+        Get.toNamed(
+          AppRoutes.reels,
+          arguments: bannerId != null && bannerId.isNotEmpty ? {'targetBannerId': bannerId} : null,
+        );
+        break;
+
+      case 'new_product':
+      case 'product':
+        if (productId != null && productId.isNotEmpty) {
+          Get.toNamed(
+            AppRoutes.productDetails,
+            arguments: productId,
+            preventDuplicates: false,
+          );
+        } else {
+          if (Get.isRegistered<MainNavController>()) {
+            Get.find<MainNavController>().changeTab(1);
+            Get.until((route) => Get.currentRoute == AppRoutes.mainNav);
+          } else {
+            Get.offAllNamed(AppRoutes.mainNav);
+          }
+        }
+        break;
+
+      case 'replacement_status':
+        Get.toNamed(AppRoutes.replacements);
+        break;
+
+      case 'account_status':
+        // Navigate to main nav account tab (tab index 4)
+        if (Get.isRegistered<MainNavController>()) {
+          Get.find<MainNavController>().changeTab(4);
+          Get.until((route) => Get.currentRoute == AppRoutes.mainNav);
+        } else {
+          Get.offAllNamed(AppRoutes.mainNav);
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (Get.isRegistered<MainNavController>()) {
+              Get.find<MainNavController>().changeTab(4);
+            }
+          });
+        }
+        break;
+
+      case 'admin_broadcast':
+        Get.toNamed(AppRoutes.notifications);
+        break;
+
+      default:
+        // Unknown type — go to notifications list
+        Get.toNamed(AppRoutes.notifications);
+        break;
+    }
+  }
+
+  /// Called after splash screen completes and MainNav is mounted
+  void checkAndExecutePendingNotification() {
+    if (_pendingColdStartData != null) {
+      final data = _pendingColdStartData!;
+      _pendingColdStartData = null;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        handleNotificationNavigation(
+          type: data['type'] as String?,
+          orderId: data['order_id'] as String?,
+          productId: data['product_id'] as String?,
+          bannerId: data['banner_id'] as String?,
+        );
+      });
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────

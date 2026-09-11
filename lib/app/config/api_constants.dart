@@ -26,6 +26,14 @@ class ApiConstants {
   static const String replacementStatusLog = '/rest/v1/replacement_status_log';
   static const String rpcAddCartItem = '/rest/v1/rpc/add_cart_item';
   static const String rpcRegisterDeviceToken = '/rest/v1/rpc/register_device_token';
+  static const String rpcAdminBroadcastNotification = '/rest/v1/rpc/admin_broadcast_notification';
+  static const String rpcAdminBroadcastAudienceCount = '/rest/v1/rpc/admin_broadcast_audience_count';
+  static const String rpcAdminDeleteUser = '/rest/v1/rpc/admin_delete_user';
+  static const String rpcAdminSetUserRole = '/rest/v1/rpc/admin_set_user_role';
+  static const String rpcAdminGetUsersList = '/rest/v1/rpc/admin_get_users_list';
+  static const String bannerComments = '/rest/v1/banner_comments';
+  static const String bannerLikes = '/rest/v1/banner_likes';
+  static const String rpcAdminSetUserBlocked = '/rest/v1/rpc/admin_set_user_blocked';
   static const String authUser = '/auth/v1/user';
   static const String authOtp = '/auth/v1/otp';
   static const String authVerify = '/auth/v1/verify';

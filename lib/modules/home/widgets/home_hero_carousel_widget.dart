@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../data/models/banner_model.dart';
@@ -45,24 +46,15 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
     super.dispose();
   }
 
-  void _onBannerTap(BannerModel banner) async {
-    // 1. If has external or deep link
-    if (banner.link != null && banner.link!.trim().isNotEmpty) {
-      final uri = Uri.tryParse(banner.link!.trim());
-      if (uri != null && await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return;
-      }
-    }
-
-    // 2. If has video URL
-    if (banner.videoUrl != null && banner.videoUrl!.trim().isNotEmpty) {
-      final uri = Uri.tryParse(banner.videoUrl!.trim());
-      if (uri != null && await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return;
-      }
-    }
+  void _onBannerTap(BannerModel banner, int index) {
+    Get.toNamed(
+      AppRoutes.reels,
+      arguments: {
+        'banners': widget.banners,
+        'initialIndex': index,
+        'targetBannerId': banner.id,
+      },
+    );
   }
 
   @override
@@ -99,29 +91,43 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
                 final hasVideo = banner.videoUrl != null && banner.videoUrl!.isNotEmpty;
 
                 return GestureDetector(
-                  onTap: () => _onBannerTap(banner),
+                  onTap: () => _onBannerTap(banner, i),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Banner Image
-                      CachedNetworkImage(
-                        imageUrl: Formatters.thumbUrl(banner.imageUrl, width: 900),
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(
-                          color: const Color(0xFF0F1E36),
-                          child: const Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                      // Banner Image or Video Card
+                      if (banner.imageUrl.isNotEmpty)
+                        CachedNetworkImage(
+                          imageUrl: Formatters.thumbUrl(banner.imageUrl, width: 900),
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => Container(
+                            color: const Color(0xFF0F1E36),
+                            child: const Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                              ),
                             ),
                           ),
+                          errorWidget: (_, __, ___) => Container(
+                            color: const Color(0xFF0F1E36),
+                            child: const Icon(Icons.broken_image_rounded, color: AppColors.gold, size: 36),
+                          ),
+                        )
+                      else
+                        Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFF0A192F), Color(0xFF1E293B)],
+                            ),
+                          ),
+                          child: const Center(
+                            child: Icon(IconsaxPlusBold.video_play, color: AppColors.gold, size: 44),
+                          ),
                         ),
-                        errorWidget: (_, __, ___) => Container(
-                          color: const Color(0xFF0F1E36),
-                          child: const Icon(Icons.broken_image_rounded, color: AppColors.gold, size: 36),
-                        ),
-                      ),
 
                       // Gradient Overlay for readability
                       Positioned.fill(
