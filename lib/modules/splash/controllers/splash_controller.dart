@@ -6,6 +6,7 @@ import '../../../core/services/cart_service.dart';
 import '../../../core/services/favorites_service.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/services/notification_service.dart';
+import '../../../core/utils/app_logger.dart';
 
 class SplashController extends GetxController {
   @override
@@ -30,15 +31,20 @@ class SplashController extends GetxController {
       final settings = Get.find<SettingsService>();
       final minVersion = Platform.isIOS ? settings.minAppVersionIos : settings.minAppVersionAndroid;
 
+      AppLogger.d('Force update check: platform=${Platform.isIOS ? "iOS" : "Android"}, '
+          'current=$currentVersion, required=$minVersion, '
+          'settingsLoaded=${settings.settings.length}');
+
       if (SettingsService.isVersionOutdated(currentVersion, minVersion)) {
+        AppLogger.d('Force update required! Redirecting to update screen');
         Get.offAllNamed(AppRoutes.forceUpdate, arguments: {
           'currentVersion': currentVersion,
           'minVersion': minVersion,
         });
         return;
       }
-    } catch (_) {
-      // Gracefully continue if version retrieval fails in dev/test
+    } catch (e) {
+      AppLogger.e('Force update check failed', e);
     }
 
     Get.offAllNamed(AppRoutes.mainNav);

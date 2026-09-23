@@ -6,6 +6,7 @@ import '../../../core/services/favorites_service.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import '../../../core/utils/responsive_grid_helper.dart';
+import '../../main_nav/controllers/main_nav_controller.dart';
 import '../../products/widgets/product_card_widget.dart';
 
 class FavoritesView extends StatefulWidget {
@@ -19,7 +20,28 @@ class _FavoritesViewState extends State<FavoritesView> {
   final ScrollController _scrollController = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().registerScrollToTop(1, _scrollToTop);
+    }
+  }
+
+  void _scrollToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  @override
   void dispose() {
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().unregisterScrollToTop(1);
+    }
     _scrollController.dispose();
     super.dispose();
   }

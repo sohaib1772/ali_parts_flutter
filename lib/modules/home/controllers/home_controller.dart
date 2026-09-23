@@ -6,6 +6,7 @@ import '../../../data/models/car_model_model.dart';
 import '../../../data/models/category_model.dart';
 import '../../../data/models/product_model.dart';
 import '../../../data/repositories/product_repository.dart';
+import '../../main_nav/controllers/main_nav_controller.dart';
 
 class HomeController extends GetxController {
   final ProductRepository _productRepo = Get.find<ProductRepository>();
@@ -57,11 +58,17 @@ class HomeController extends GetxController {
   void onInit() {
     super.onInit();
     scrollController.addListener(_onScroll);
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().registerScrollToTop(0, scrollToTop);
+    }
     loadHomeData(refreshMetadata: true);
   }
 
   @override
   void onClose() {
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().unregisterScrollToTop(0);
+    }
     scrollController.dispose();
     super.onClose();
   }
@@ -73,30 +80,47 @@ class HomeController extends GetxController {
       if (showScrollToTop.value != shouldShow) {
         showScrollToTop.value = shouldShow;
       }
-
-      // Infinite scroll load more with generous 750px threshold for smooth scrolling on all screen sizes
-      if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 750) {
-        if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
-          loadMoreProducts();
-        }
-      }
     }
   }
 
   bool handleScrollNotification(ScrollNotification notification) {
-    if (notification.metrics.pixels >= notification.metrics.maxScrollExtent - 750) {
-      if (!isLoading.value && !isLoadingMore.value && hasMore.value) {
+    // Ignore internal metrics change notifications (e.g. layout resize on adding items)
+    if (notification is ScrollMetricsNotification) {
+      return false;
+    }
+
+    if (!hasMore.value || isLoading.value || isLoadingMore.value) {
+      return false;
+    }
+
+    final m = notification.metrics;
+    if (m.axis != Axis.vertical || m.maxScrollExtent <= 0) {
+      return false;
+    }
+
+    // 1. Actively scrolling downwards (finger drag or momentum fling)
+    if (notification is ScrollUpdateNotification) {
+      final delta = notification.scrollDelta;
+      if (delta != null && delta > 0) {
+        if (m.pixels >= m.maxScrollExtent - 350 && m.pixels > 150) {
+          loadMoreProducts();
+        }
+      }
+    }
+    // 2. iOS Bouncing physics: overscroll at the bottom (user pulling up past end)
+    else if (notification is OverscrollNotification) {
+      if (notification.overscroll > 0 && m.pixels > 150) {
         loadMoreProducts();
       }
     }
-    return false;
-  }
-
-  void _checkNeedMoreProducts() {
-    if (!hasMore.value || isLoading.value || isLoadingMore.value) return;
-    if (scrollController.hasClients && scrollController.position.maxScrollExtent < 300) {
-      loadMoreProducts();
+    // 3. Fling inertia or gesture ended near bottom
+    else if (notification is ScrollEndNotification) {
+      if (m.pixels >= m.maxScrollExtent - 350 && m.pixels > 150) {
+        loadMoreProducts();
+      }
     }
+
+    return false;
   }
 
   void scrollToTop() {
@@ -150,10 +174,6 @@ class HomeController extends GetxController {
       totalProductsCount.value = queryRes.totalCount;
       _offset = queryRes.products.length;
       hasMore.value = allProducts.length < totalProductsCount.value;
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _checkNeedMoreProducts();
-      });
     } catch (_) {
     } finally {
       isLoading.value = false;
@@ -183,12 +203,6 @@ class HomeController extends GetxController {
       totalProductsCount.value = res.totalCount;
       _offset += res.products.length;
       hasMore.value = allProducts.length < totalProductsCount.value;
-
-      if (hasMore.value) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _checkNeedMoreProducts();
-        });
-      }
     } catch (_) {
     } finally {
       isLoadingMore.value = false;

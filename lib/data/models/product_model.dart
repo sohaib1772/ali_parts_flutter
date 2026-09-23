@@ -23,6 +23,7 @@ class ProductModel {
   final String condition; // 'new' | 'used'
   final bool hasSideOptions;
   final String? createdAt;
+  final Map<String, dynamic>? specs;
 
   ProductModel({
     required this.id,
@@ -49,6 +50,7 @@ class ProductModel {
     this.condition = 'new',
     this.hasSideOptions = true,
     this.createdAt,
+    this.specs,
   });
 
   bool get isAvailable => inStock && stockQty > 0;
@@ -95,6 +97,7 @@ class ProductModel {
       condition: json['condition'] as String? ?? 'new',
       hasSideOptions: json['has_side_options'] as bool? ?? true,
       createdAt: json['created_at'] as String?,
+      specs: json['specs'] is Map<String, dynamic> ? (json['specs'] as Map<String, dynamic>) : null,
     );
   }
 
@@ -123,5 +126,6 @@ class ProductModel {
     'condition': condition,
     'has_side_options': hasSideOptions,
     'created_at': createdAt,
+    'specs': specs,
   };
 }

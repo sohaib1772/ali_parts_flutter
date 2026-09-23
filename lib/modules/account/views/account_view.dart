@@ -29,11 +29,34 @@ class AccountView extends StatefulWidget {
 
 class _AccountViewState extends State<AccountView> {
   bool _isUploadingAvatar = false;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().registerScrollToTop(4, _scrollToTop);
+    }
     _refreshAccountData();
+  }
+
+  void _scrollToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().unregisterScrollToTop(4);
+    }
+    _scrollController.dispose();
+    super.dispose();
   }
 
   void _refreshAccountData() async {
@@ -132,6 +155,7 @@ class _AccountViewState extends State<AccountView> {
                 // Scrollable Body Content
                 Expanded(
                   child: ListView(
+                    controller: _scrollController,
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),

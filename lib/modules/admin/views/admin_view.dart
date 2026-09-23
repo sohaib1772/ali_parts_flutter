@@ -25,6 +25,7 @@ import '../../../data/models/category_model.dart';
 import '../../../data/models/product_model.dart';
 import '../../../data/repositories/product_repository.dart';
 import '../../home/controllers/home_controller.dart';
+import '../../reels/controllers/reels_controller.dart';
 
 class AdminView extends StatefulWidget {
   const AdminView({super.key});
@@ -1086,65 +1087,86 @@ class _AdminViewState extends State<AdminView> {
     setState(() => _isLoadingUsers = true);
     try {
       final dio = Get.find<DioClient>().dio;
+      List<Map<String, dynamic>> rawUsers = [];
+
       // 1. Try RPC admin_get_users_list
       try {
         final rpcRes = await dio.post('/rest/v1/rpc/admin_get_users_list');
         if ((rpcRes.statusCode == 200 || rpcRes.statusCode == 201) && rpcRes.data is List) {
-          if (mounted) {
-            setState(() {
-              _users = List<Map<String, dynamic>>.from(
-                (rpcRes.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
-              );
-              _isLoadingUsers = false;
-            });
-          }
-          return;
+          rawUsers = List<Map<String, dynamic>>.from(
+            (rpcRes.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
+          );
         }
       } catch (_) {
         // Fallback to direct tables
       }
 
-      // 2. Direct tables fallback
-      final res = await dio.get('/rest/v1/profiles', queryParameters: {
-        'select': '*',
-        'order': 'created_at.desc',
-      });
+      // 2. Direct tables fallback if RPC failed or empty
+      if (rawUsers.isEmpty) {
+        final res = await dio.get('/rest/v1/profiles', queryParameters: {
+          'select': '*',
+          'order': 'created_at.desc',
+        });
 
-      if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
-        final rawUsers = List<Map<String, dynamic>>.from(
-          (res.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
-        );
+        if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
+          rawUsers = List<Map<String, dynamic>>.from(
+            (res.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
+          );
 
-        // Fetch user_roles and staff_permissions in parallel
+          // Fetch user_roles and staff_permissions in parallel
+          try {
+            final rolesRes = await dio.get('/rest/v1/user_roles', queryParameters: {'select': 'user_id,role'});
+            final staffRes = await dio.get('/rest/v1/staff_permissions', queryParameters: {'select': '*'});
+
+            final adminIds = <String>{};
+            if (rolesRes.data is List) {
+              for (final r in (rolesRes.data as List)) {
+                if (r['role'] == 'admin' && r['user_id'] != null) {
+                  adminIds.add(r['user_id'].toString());
+                }
+              }
+            }
+            final staffMap = <String, Map<String, dynamic>>{};
+            if (staffRes.data is List) {
+              for (final s in (staffRes.data as List)) {
+                if (s['user_id'] != null) {
+                  staffMap[s['user_id'].toString()] = Map<String, dynamic>.from(s as Map);
+                }
+              }
+            }
+
+            for (final u in rawUsers) {
+              final uid = u['id']?.toString() ?? '';
+              final isAdm = adminIds.contains(uid);
+              final sp = staffMap[uid];
+              final isStf = sp != null && (sp['can_orders'] == true || sp['can_products'] == true || sp['can_replacements'] == true || sp['can_block'] == true || sp['can_moderate_comments'] == true);
+              u['is_admin'] = isAdm;
+              u['is_staff'] = isStf;
+              u['staff_permissions'] = sp;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 3. Fetch device tokens for push notifications
+      if (rawUsers.isNotEmpty) {
         try {
-          final rolesRes = await dio.get('/rest/v1/user_roles', queryParameters: {'select': 'user_id,role'});
-          final staffRes = await dio.get('/rest/v1/staff_permissions', queryParameters: {'select': '*'});
-
-          final adminIds = <String>{};
-          if (rolesRes.data is List) {
-            for (final r in (rolesRes.data as List)) {
-              if (r['role'] == 'admin' && r['user_id'] != null) {
-                adminIds.add(r['user_id'].toString());
+          final dtRes = await dio.get('/rest/v1/device_tokens', queryParameters: {
+            'select': 'user_id,token,platform,last_seen',
+            'order': 'last_seen.desc',
+          });
+          if ((dtRes.statusCode == 200 || dtRes.statusCode == 206) && dtRes.data is List) {
+            final tokenMap = <String, List<Map<String, dynamic>>>{};
+            for (final t in (dtRes.data as List)) {
+              final uid = t['user_id']?.toString();
+              if (uid != null) {
+                tokenMap.putIfAbsent(uid, () => []).add(Map<String, dynamic>.from(t as Map));
               }
             }
-          }
-          final staffMap = <String, Map<String, dynamic>>{};
-          if (staffRes.data is List) {
-            for (final s in (staffRes.data as List)) {
-              if (s['user_id'] != null) {
-                staffMap[s['user_id'].toString()] = Map<String, dynamic>.from(s as Map);
-              }
+            for (final u in rawUsers) {
+              final uid = u['id']?.toString() ?? '';
+              u['device_tokens'] = tokenMap[uid] ?? [];
             }
-          }
-
-          for (final u in rawUsers) {
-            final uid = u['id']?.toString() ?? '';
-            final isAdm = adminIds.contains(uid);
-            final sp = staffMap[uid];
-            final isStf = sp != null && (sp['can_orders'] == true || sp['can_products'] == true || sp['can_replacements'] == true || sp['can_block'] == true || sp['can_moderate_comments'] == true);
-            u['is_admin'] = isAdm;
-            u['is_staff'] = isStf;
-            u['staff_permissions'] = sp;
           }
         } catch (_) {}
 
@@ -6161,6 +6183,9 @@ class _AdminViewState extends State<AdminView> {
                                   if (Get.isRegistered<HomeController>()) {
                                     Get.find<HomeController>().loadHomeData(refreshMetadata: true);
                                   }
+                                  if (Get.isRegistered<ReelsController>()) {
+                                    Get.find<ReelsController>().refreshBanners();
+                                  }
                                 } catch (e) {
                                   Get.snackbar('خطأ', 'تعذر حفظ العرض: $e', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
                                 } finally {
@@ -6218,6 +6243,9 @@ class _AdminViewState extends State<AdminView> {
         _loadBanners();
         if (Get.isRegistered<HomeController>()) {
           Get.find<HomeController>().loadHomeData(refreshMetadata: true);
+        }
+        if (Get.isRegistered<ReelsController>()) {
+          Get.find<ReelsController>().refreshBanners();
         }
       } catch (e) {
         Get.snackbar('خطأ', 'تعذر حذف العرض', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
@@ -8520,8 +8548,8 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   late final TextEditingController _stockCountCtrl;
 
   bool _mergeDelivery = true;
-  String? _selectedCategoryId;
-  String? _selectedBrandId;
+  final List<String> _selectedCategoryIds = [];
+  final List<String> _selectedBrandIds = [];
   final List<String> _selectedCompatibleModels = [];
   final List<_ProductImageItem> _imageItems = [];
   bool _inStock = true;
@@ -8563,8 +8591,20 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _deliveryGroupCtrl = TextEditingController();
     _stockCountCtrl = TextEditingController(text: p?.stockQty.toString() ?? '1');
 
-    _selectedCategoryId = p?.categoryId;
-    _selectedBrandId = p?.brandId;
+    if (p != null) {
+      final pSpecs = p.specs ?? {};
+      if (pSpecs['category_ids'] is List) {
+        _selectedCategoryIds.addAll((pSpecs['category_ids'] as List).map((e) => e.toString()));
+      } else if (p.categoryId != null && p.categoryId!.isNotEmpty) {
+        _selectedCategoryIds.add(p.categoryId!);
+      }
+
+      if (pSpecs['brand_ids'] is List) {
+        _selectedBrandIds.addAll((pSpecs['brand_ids'] as List).map((e) => e.toString()));
+      } else if (p.brandId != null && p.brandId!.isNotEmpty) {
+        _selectedBrandIds.add(p.brandId!);
+      }
+    }
     if (p != null) {
       _selectedCompatibleModels.addAll(p.compatibleModels);
       for (final url in p.images) {
@@ -8708,8 +8748,13 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
         'shipping_iqd': double.tryParse(_shippingIqdCtrl.text.trim()) ?? 0,
         'merge_delivery': _mergeDelivery,
         if (_deliveryGroupCtrl.text.trim().isNotEmpty) 'delivery_group': _deliveryGroupCtrl.text.trim(),
-        if (_selectedCategoryId != null) 'category_id': _selectedCategoryId,
-        if (_selectedBrandId != null) 'brand_id': _selectedBrandId,
+        'category_id': _selectedCategoryIds.isNotEmpty ? _selectedCategoryIds.first : null,
+        'brand_id': _selectedBrandIds.isNotEmpty ? _selectedBrandIds.first : null,
+        'specs': {
+          ...(widget.product?.specs ?? {}),
+          'category_ids': _selectedCategoryIds,
+          'brand_ids': _selectedBrandIds,
+        },
         'images': finalImageUrls,
         'in_stock': _inStock,
         'stock_qty': int.tryParse(_stockCountCtrl.text.trim()) ?? 0,
@@ -8974,65 +9019,161 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  _buildFormLabel('التصنيف'),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildFormLabel('التصنيفات (يمكن اختيار أكثر من تصنيف)'),
+                      Text('${_selectedCategoryIds.length} محدد', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: const Color(0xFFCBD5E1)),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedCategoryId,
-                        isExpanded: true,
-                        hint: const Text('اختر تصنيف', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
-                        items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('اختر تصنيف', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                    child: _categories.isEmpty
+                        ? const Center(child: Text('لا توجد تصنيفات', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))))
+                        : LayoutBuilder(
+                            builder: (context, constraints) => Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _categories.map((c) {
+                                final isSelected = _selectedCategoryIds.contains(c.id);
+                                return InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      if (isSelected) {
+                                        _selectedCategoryIds.remove(c.id);
+                                      } else {
+                                        _selectedCategoryIds.add(c.id);
+                                      }
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFCBD5E1),
+                                        width: 1.2,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isSelected) ...[
+                                          const Icon(Icons.check_circle_rounded, size: 14, color: Color(0xFFD97706)),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        Flexible(
+                                          child: Text(
+                                            c.nameAr,
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                              color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                                              fontFamily: 'Cairo',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
                           ),
-                          ..._categories.map((c) => DropdownMenuItem<String>(
-                                value: c.id,
-                                child: Text(c.nameAr, style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A))),
-                              )),
-                        ],
-                        onChanged: (v) => setState(() => _selectedCategoryId = v),
-                      ),
-                    ),
                   ),
                   const SizedBox(height: 14),
-                  _buildFormLabel('الماركة'),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildFormLabel('الماركات (يمكن اختيار أكثر من ماركة)'),
+                      Text('${_selectedBrandIds.length} محدد', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: const Color(0xFFCBD5E1)),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedBrandId,
-                        isExpanded: true,
-                        hint: const Text('اختر ماركة', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
-                        items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('اختر ماركة', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                    child: _brands.isEmpty
+                        ? const Center(child: Text('لا توجد ماركات', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))))
+                        : LayoutBuilder(
+                            builder: (context, constraints) => Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _brands.map((b) {
+                                final isSelected = _selectedBrandIds.contains(b.id);
+                                return InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      if (isSelected) {
+                                        _selectedBrandIds.remove(b.id);
+                                      } else {
+                                        _selectedBrandIds.add(b.id);
+                                      }
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFCBD5E1),
+                                        width: 1.2,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isSelected) ...[
+                                          const Icon(Icons.check_circle_rounded, size: 14, color: Color(0xFFD97706)),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        Flexible(
+                                          child: Text(
+                                            b.nameAr,
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                              color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                                              fontFamily: 'Cairo',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
                           ),
-                          ..._brands.map((b) => DropdownMenuItem<String>(
-                                value: b.id,
-                                child: Text(b.nameAr, style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A))),
-                              )),
-                        ],
-                        onChanged: (v) => setState(() => _selectedBrandId = v),
-                      ),
-                    ),
                   ),
                   const SizedBox(height: 14),
-                  _buildFormLabel('السيارات المتوافقة'),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildFormLabel('السيارات المتوافقة'),
+                      Text('${_selectedCompatibleModels.length} محدد', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   Container(
                     padding: const EdgeInsets.all(12),

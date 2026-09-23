@@ -6,6 +6,7 @@ import '../models/brand_model.dart';
 import '../models/car_model_model.dart';
 import '../models/category_model.dart';
 import '../models/product_model.dart';
+import '../../core/utils/arabic_search_helper.dart';
 
 class ProductQueryResult {
   final List<ProductModel> products;
@@ -179,18 +180,31 @@ class ProductRepository {
     if (categoryId != null && categoryId.isNotEmpty) {
       params['category_id'] = 'eq.$categoryId';
     }
-    if (brandId != null && brandId.isNotEmpty) {
-      params['brand_id'] = 'eq.$brandId';
-    }
     if (carModelId != null && carModelId.isNotEmpty) {
       params['compatible_models'] = 'cs.{$carModelId}';
     }
     if (condition != null && condition.isNotEmpty && condition != 'all') {
       params['condition'] = 'eq.$condition';
     }
-    if (searchQuery != null && searchQuery.trim().isNotEmpty) {
-      final q = searchQuery.trim();
-      params['or'] = '(name_ar.ilike.%$q%,name_en.ilike.%$q%,oem_number.ilike.%$q%)';
+    final hasBrand = brandId != null && brandId.isNotEmpty;
+    final hasSearch = searchQuery != null && searchQuery.trim().isNotEmpty;
+
+    if (hasBrand && hasSearch) {
+      final orClause = ArabicSearchHelper.buildPostgrestOrClause(searchQuery);
+      final brandOr = 'or(brand_id.eq.$brandId,specs->brand_ids.cs.["$brandId"])';
+      if (orClause.isNotEmpty) {
+        final searchOr = 'or$orClause';
+        params['and'] = '($brandOr,$searchOr)';
+      } else {
+        params['or'] = '(brand_id.eq.$brandId,specs->brand_ids.cs.["$brandId"])';
+      }
+    } else if (hasBrand) {
+      params['or'] = '(brand_id.eq.$brandId,specs->brand_ids.cs.["$brandId"])';
+    } else if (hasSearch) {
+      final orClause = ArabicSearchHelper.buildPostgrestOrClause(searchQuery);
+      if (orClause.isNotEmpty) {
+        params['or'] = orClause;
+      }
     }
 
     if (sort == 'price_asc') {

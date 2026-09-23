@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:video_player/video_player.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
@@ -115,6 +116,8 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
                             child: const Icon(Icons.broken_image_rounded, color: AppColors.gold, size: 36),
                           ),
                         )
+                      else if (hasVideo)
+                        _VideoFirstFrameThumbnail(videoUrl: banner.videoUrl!)
                       else
                         Container(
                           decoration: const BoxDecoration(
@@ -272,6 +275,115 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _VideoFirstFrameThumbnail extends StatefulWidget {
+  final String videoUrl;
+
+  const _VideoFirstFrameThumbnail({required this.videoUrl});
+
+  @override
+  State<_VideoFirstFrameThumbnail> createState() => _VideoFirstFrameThumbnailState();
+}
+
+class _VideoFirstFrameThumbnailState extends State<_VideoFirstFrameThumbnail> {
+  VideoPlayerController? _controller;
+  bool _isInitialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initVideo();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoFirstFrameThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoUrl != widget.videoUrl) {
+      _controller?.dispose();
+      _controller = null;
+      _isInitialized = false;
+      _hasError = false;
+      _initVideo();
+    }
+  }
+
+  Future<void> _initVideo() async {
+    final rawUrl = widget.videoUrl.trim();
+    if (rawUrl.isEmpty) {
+      if (mounted) setState(() => _hasError = true);
+      return;
+    }
+    try {
+      final uri = Uri.tryParse(rawUrl);
+      if (uri == null) {
+        if (mounted) setState(() => _hasError = true);
+        return;
+      }
+      final ctrl = VideoPlayerController.networkUrl(uri);
+      _controller = ctrl;
+      await ctrl.initialize();
+      await ctrl.setVolume(0.0);
+      await ctrl.pause();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isInitialized && _controller != null && _controller!.value.isInitialized) {
+      final size = _controller!.value.size;
+      final w = (size.width > 0) ? size.width : 16.0;
+      final h = (size.height > 0) ? size.height : 9.0;
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: w,
+            height: h,
+            child: VideoPlayer(_controller!),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0A192F), Color(0xFF1E293B)],
+        ),
+      ),
+      child: Center(
+        child: _hasError
+            ? const Icon(IconsaxPlusBold.video_play, color: AppColors.gold, size: 44)
+            : const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+              ),
       ),
     );
   }

@@ -475,7 +475,7 @@ class ProductDetailsView extends GetView<ProductDetailsController> {
                                         const SizedBox(width: 4),
                                         Text(
                                           product.isAvailable
-                                              ? 'متوفر · ${product.stockQty} قطعة'
+                                              ? 'متوفر'
                                               : 'غير متوفر',
                                           style: TextStyle(
                                             color: product.isAvailable
@@ -1085,7 +1085,7 @@ class ProductDetailsView extends GetView<ProductDetailsController> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              product.isAvailable ? '${product.stockQty} قطعة' : 'غير متوفر',
+                              product.isAvailable ? 'متوفر' : 'غير متوفر',
                               style: TextStyle(
                                 color: product.isAvailable
                                     ? const Color(0xFF047857)

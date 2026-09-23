@@ -1,21 +1,62 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../app/routes/app_routes.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/utils/formatters.dart';
+import '../../reels/controllers/reels_controller.dart';
 
 class MainNavController extends GetxController {
   final RxInt currentIndex = 0.obs;
 
+  // Callbacks for re-tapping the active tab (scroll to top)
+  final Map<int, VoidCallback> _scrollToTopCallbacks = {};
+
+  void registerScrollToTop(int tabIndex, VoidCallback callback) {
+    _scrollToTopCallbacks[tabIndex] = callback;
+  }
+
+  void unregisterScrollToTop(int tabIndex) {
+    _scrollToTopCallbacks.remove(tabIndex);
+  }
+
+  void onTabTapped(int index) {
+    if (index == 3) {
+      // Reels is a dedicated full-screen page outside main layout
+      HapticFeedback.selectionClick();
+      Get.toNamed(AppRoutes.reels)?.then((_) {
+        // When returning from Reels, always switch back to the Home tab
+        changeTab(0);
+      });
+      return;
+    }
+
+    if (currentIndex.value == index) {
+      // Re-tapped the active tab -> trigger scroll to top
+      HapticFeedback.selectionClick();
+      final callback = _scrollToTopCallbacks[index];
+      if (callback != null) {
+        callback();
+      }
+    } else {
+      changeTab(index);
+    }
+  }
+
   void changeTab(int index) {
     if (index == 3) {
-      // Tab 3 is Messages / WhatsApp
-      showWhatsAppDialog();
+      Get.toNamed(AppRoutes.reels)?.then((_) {
+        changeTab(0);
+      });
       return;
     }
     currentIndex.value = index;
+    if (Get.isRegistered<ReelsController>()) {
+      Get.find<ReelsController>().setTabVisible(false);
+    }
   }
 
   void showWhatsAppDialog() {

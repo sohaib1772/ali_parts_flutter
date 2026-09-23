@@ -10,6 +10,12 @@ class AppLogger {
     }
   }
 
+  static void w(String message) {
+    if (kDebugMode) {
+      dev.log('⚠️ $message', name: 'AliParts');
+    }
+  }
+
   static void e(String message, [Object? error, StackTrace? stackTrace]) {
     if (kDebugMode) {
       dev.log('❌ $message', name: 'AliParts', error: error, stackTrace: stackTrace);

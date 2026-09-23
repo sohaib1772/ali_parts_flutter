@@ -13,6 +13,7 @@ import '../network/dio_client.dart';
 import '../utils/app_logger.dart';
 import '../widgets/notification_popup.dart';
 import 'secure_storage_service.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../app/routes/app_routes.dart';
 import '../../data/repositories/order_repository.dart';
 import '../../modules/orders/views/order_details_view.dart';
@@ -89,7 +90,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     }
 
     // 3. Request notification permission & configure iOS presentation
-    await FirebaseMessaging.instance.requestPermission(
+    final settings = await FirebaseMessaging.instance.requestPermission(
       alert: true,
       announcement: false,
       badge: true,
@@ -98,6 +99,17 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       provisional: false,
       sound: true,
     );
+
+    if (settings.authorizationStatus == AuthorizationStatus.denied) {
+      AppLogger.w('Notification permission was denied by the user');
+      unawaited(_logNotificationEvent(
+        eventType: 'permission_denied',
+        status: 'warning',
+        title: 'رفض إذن الإشعارات من المستخدم',
+        message: 'المستخدم رفض منح إذن الإشعارات في نظام التشغيل.',
+        errorDetails: 'AuthorizationStatus.denied',
+      ));
+    }
 
     await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
       alert: true,
@@ -118,6 +130,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _currentUserId != null) {
       fetchUnreadCount();
+      registerFcmToken();
     }
   }
 
@@ -265,12 +278,13 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     }
     if (orderId != null && orderId.trim().isNotEmpty) {
       final oId = orderId.trim();
-      keys.add('order:$oId');
+      final effectiveType = type?.trim() ?? 'order';
+      keys.add('order:$effectiveType:$oId');
       if (status != null && status.trim().isNotEmpty) {
-        keys.add('order_status:$oId:${status.trim()}');
+        keys.add('order_status:$effectiveType:$oId:${status.trim()}');
       }
       if (title != null && title.trim().isNotEmpty) {
-        keys.add('order_title:$oId:${title.trim()}');
+        keys.add('order_title:$effectiveType:$oId:${title.trim()}');
       }
     }
     if (title != null && title.trim().isNotEmpty) {
@@ -301,7 +315,10 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     });
   }
 
-  int _deriveTrayId({String? orderId, String? notifId, String? title}) {
+  int _deriveTrayId({String? orderId, String? notifId, String? title, String? type}) {
+    if (type != null && type.trim().isNotEmpty && orderId != null && orderId.trim().isNotEmpty) {
+      return ('${type.trim()}:${orderId.trim()}'.hashCode & 0x7FFFFFFF);
+    }
     if (orderId != null && orderId.trim().isNotEmpty) {
       return (orderId.trim().hashCode & 0x7FFFFFFF);
     }
@@ -362,7 +379,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
     // Only show system tray notification if not already shown
     if (title.isNotEmpty) {
-      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title);
+      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title, type: type);
       showLocalNotification(
         id: trayId,
         title: title,
@@ -418,7 +435,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     }
 
     if (title.isNotEmpty) {
-      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title);
+      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title, type: type);
       showLocalNotification(
         id: trayId,
         title: title,
@@ -429,35 +446,156 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   }
 
   // ──────────────────────────────────────────────────────────────────
-  // FCM token registration
+  // Device info & logging helpers
+  // ──────────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> _collectDeviceInfo() async {
+    String appVer = '1.1.0';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      appVer = '${info.version}+${info.buildNumber}';
+    } catch (_) {}
+
+    final isIos = Platform.isIOS;
+    return {
+      'client': 'flutter',
+      'platform': isIos ? 'ios' : 'android',
+      'os_version': Platform.operatingSystemVersion,
+      'device_model': isIos ? 'iPhone / iOS Device' : 'Android Device',
+      'app_version': appVer,
+    };
+  }
+
+  Future<void> _logNotificationEvent({
+    required String eventType,
+    required String status,
+    String? platform,
+    String? title,
+    String? message,
+    String? errorDetails,
+    Map<String, dynamic>? deviceInfo,
+    String? tokenPreview,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final plat = platform ?? (Platform.isIOS ? 'ios' : 'android');
+      final info = deviceInfo ?? await _collectDeviceInfo();
+
+      await dio.post(
+        ApiConstants.rpcLogNotificationEvent,
+        data: {
+          'p_event_type': eventType,
+          'p_status': status,
+          'p_platform': plat,
+          'p_title': title,
+          'p_message': message,
+          'p_error_details': errorDetails,
+          'p_device_info': info,
+          'p_token_preview': tokenPreview,
+          'p_metadata': metadata ?? {},
+        },
+      );
+    } catch (e) {
+      AppLogger.w('Failed to post notification log event: $e');
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // FCM token registration with full diagnostic logging
   // ──────────────────────────────────────────────────────────────────
   Future<void> registerFcmToken() async {
+    final platform = Platform.isIOS ? 'ios' : 'android';
+    final deviceInfo = await _collectDeviceInfo();
+
     try {
       // On iOS, APNs token must be resolved before FCM token can be generated
       if (Platform.isIOS) {
         String? apnsToken = await FirebaseMessaging.instance.getAPNSToken();
         if (apnsToken == null) {
-          // Retry for up to 3 seconds for APNs registration to complete
-          for (var i = 0; i < 3; i++) {
+          // Retry for up to 5 seconds for APNs registration to complete
+          for (var i = 0; i < 5; i++) {
             await Future.delayed(const Duration(seconds: 1));
             apnsToken = await FirebaseMessaging.instance.getAPNSToken();
             if (apnsToken != null) break;
           }
         }
+        if (apnsToken == null) {
+          AppLogger.w('APNs token is not ready yet on iOS after 5 seconds');
+          await _logNotificationEvent(
+            eventType: 'apns_failed',
+            status: 'failure',
+            platform: 'ios',
+            title: 'تعذر استلام APNs Token في iPhone',
+            message: 'لم يتمكن جهاز الآيفون من الحصول على APNs Token من خوادم Apple بعد 5 محاولات.',
+            errorDetails: 'FirebaseMessaging.getAPNSToken() returned null.',
+            deviceInfo: deviceInfo,
+          );
+          Future.delayed(const Duration(seconds: 5), () => registerFcmToken());
+          return;
+        }
       }
 
-      final fcmToken = await FirebaseMessaging.instance.getToken();
-      if (fcmToken == null || fcmToken.isEmpty) return;
+      String? fcmToken;
+      try {
+        fcmToken = await FirebaseMessaging.instance.getToken();
+      } catch (tokenErr) {
+        AppLogger.e('Failed to get FCM token', tokenErr);
+        await _logNotificationEvent(
+          eventType: 'fcm_failed',
+          status: 'failure',
+          platform: platform,
+          title: 'فشل استخراج FCM Token من Firebase',
+          message: 'حدث استثناء أثناء محاولة استخراج رمز الجهاز من Firebase.',
+          errorDetails: tokenErr.toString(),
+          deviceInfo: deviceInfo,
+        );
+        return;
+      }
 
-      AppLogger.d('FCM token obtained (${fcmToken.substring(0, 12)}...)');
+      if (fcmToken == null || fcmToken.isEmpty) {
+        AppLogger.w('FCM token is null or empty');
+        await _logNotificationEvent(
+          eventType: 'fcm_failed',
+          status: 'failure',
+          platform: platform,
+          title: 'رمز FCM فارغ من Firebase',
+          message: 'أرجعت خدمة Firebase قيمة فارغة لرمز الإشعارات.',
+          errorDetails: 'getToken() returned null or empty string',
+          deviceInfo: deviceInfo,
+        );
+        return;
+      }
+
+      final preview = fcmToken.length > 14
+          ? '${fcmToken.substring(0, 8)}...${fcmToken.substring(fcmToken.length - 6)}'
+          : fcmToken.substring(0, 8);
+
+      AppLogger.d('FCM token obtained ($preview)');
 
       final dio = Get.find<DioClient>().dio;
-      final platform = Platform.isIOS ? 'ios' : 'android';
-      await dio.post(
-        ApiConstants.rpcRegisterDeviceToken,
-        data: {'p_token': fcmToken, 'p_platform': platform},
-      );
-      AppLogger.d('FCM token registered');
+      try {
+        await dio.post(
+          ApiConstants.rpcRegisterDeviceToken,
+          data: {
+            'p_token': fcmToken,
+            'p_platform': platform,
+            'p_device_info': deviceInfo,
+          },
+        );
+        AppLogger.d('FCM token registered successfully');
+      } catch (postErr) {
+        AppLogger.e('Failed to register device token via RPC', postErr);
+        await _logNotificationEvent(
+          eventType: 'token_registration_failed',
+          status: 'failure',
+          platform: platform,
+          title: 'فشل حفظ التوكن في السيرفر',
+          message: 'فشل اتصال حفظ التوكن مع قاعدة البيانات.',
+          errorDetails: postErr.toString(),
+          tokenPreview: preview,
+          deviceInfo: deviceInfo,
+        );
+      }
 
       // Listen for token refresh
       _tokenRefreshSub?.cancel();
@@ -466,15 +604,37 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         try {
           await dio.post(
             ApiConstants.rpcRegisterDeviceToken,
-            data: {'p_token': newToken, 'p_platform': platform},
+            data: {
+              'p_token': newToken,
+              'p_platform': platform,
+              'p_device_info': deviceInfo,
+            },
           );
-          AppLogger.d('FCM token refreshed');
+          AppLogger.d('FCM token refreshed and registered');
         } catch (e) {
-          AppLogger.e('Failed to re-register FCM token', e);
+          AppLogger.e('Failed to re-register refreshed FCM token', e);
+          await _logNotificationEvent(
+            eventType: 'token_registration_failed',
+            status: 'failure',
+            platform: platform,
+            title: 'فشل تحديث التوكن في السيرفر',
+            message: 'حدث خطأ أثناء حفظ التوكن الجديد بعد تجديده تلقائياً.',
+            errorDetails: e.toString(),
+            deviceInfo: deviceInfo,
+          );
         }
       });
     } catch (e) {
       AppLogger.e('Failed to register FCM token', e);
+      await _logNotificationEvent(
+        eventType: 'token_registration_failed',
+        status: 'failure',
+        platform: platform,
+        title: 'خطأ عام أثناء تسجيل التوكن',
+        message: 'حدث استثناء غير معالج أثناء تسجيل توكن الإشعارات.',
+        errorDetails: e.toString(),
+        deviceInfo: deviceInfo,
+      );
     }
   }
 
@@ -490,7 +650,8 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         type: data['type'] as String?,
         orderId: data['order_id'] as String?,
         productId: data['product_id'] as String?,
-        bannerId: data['banner_id'] as String?,
+        bannerId: (data['banner_id'] as String?) ?? (data['status'] as String?),
+        status: data['status'] as String?,
       );
     } catch (e) {
       AppLogger.e('Failed to parse notification payload', e);
@@ -506,7 +667,8 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       type: message.data['type'] as String?,
       orderId: message.data['order_id'] as String?,
       productId: message.data['product_id'] as String?,
-      bannerId: message.data['banner_id'] as String?,
+      bannerId: (message.data['banner_id'] as String?) ?? (message.data['status'] as String?),
+      status: message.data['status'] as String?,
     );
   }
 
@@ -518,8 +680,13 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     String? orderId,
     String? productId,
     String? bannerId,
+    String? status,
   }) async {
-    AppLogger.d('Navigating for notification: type=$type, orderId=$orderId, productId=$productId, bannerId=$bannerId');
+    final effectiveBannerId = (bannerId != null && bannerId.isNotEmpty)
+        ? bannerId
+        : ((status != null && status.isNotEmpty && status.length > 20) ? status : null);
+
+    AppLogger.d('Navigating for notification: type=$type, orderId=$orderId, productId=$productId, bannerId=$effectiveBannerId');
 
     // Fallback: if type is missing but orderId is provided, treat as order_status
     final resolvedType = (type == null || type.isEmpty)
@@ -528,6 +695,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
     switch (resolvedType) {
       case 'order_status':
+      case 'admin_new_order':
         if (orderId != null && orderId.isNotEmpty) {
           try {
             if (Get.isRegistered<OrderRepository>()) {
@@ -552,9 +720,13 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         break;
 
       case 'promo':
+      case 'banner_comment':
+      case 'banner_reply':
         Get.toNamed(
           AppRoutes.reels,
-          arguments: bannerId != null && bannerId.isNotEmpty ? {'targetBannerId': bannerId} : null,
+          arguments: effectiveBannerId != null && effectiveBannerId.isNotEmpty
+              ? {'targetBannerId': effectiveBannerId}
+              : null,
         );
         break;
 
@@ -616,7 +788,8 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
           type: data['type'] as String?,
           orderId: data['order_id'] as String?,
           productId: data['product_id'] as String?,
-          bannerId: data['banner_id'] as String?,
+          bannerId: (data['banner_id'] as String?) ?? (data['status'] as String?),
+          status: data['status'] as String?,
         );
       });
     }

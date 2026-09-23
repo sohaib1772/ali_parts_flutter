@@ -13,6 +13,7 @@ import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import '../../../data/models/order_model.dart';
 import '../../../data/repositories/order_repository.dart';
+import '../../main_nav/controllers/main_nav_controller.dart';
 import '../widgets/order_tracking_widget.dart';
 import 'order_details_view.dart';
 
@@ -37,6 +38,9 @@ class _OrdersViewState extends State<OrdersView> {
   void initState() {
     super.initState();
     _fetchOrders();
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().registerScrollToTop(2, _scrollToTop);
+    }
     if (Get.isRegistered<NotificationService>()) {
       _ordersSub = Get.find<NotificationService>().ordersUpdates.listen((_) {
         _fetchOrders();
@@ -44,8 +48,21 @@ class _OrdersViewState extends State<OrdersView> {
     }
   }
 
+  void _scrollToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   @override
   void dispose() {
+    if (Get.isRegistered<MainNavController>()) {
+      Get.find<MainNavController>().unregisterScrollToTop(2);
+    }
     _ordersSub?.cancel();
     _scrollController.dispose();
     super.dispose();

@@ -1,4 +1,4 @@
-﻿import 'package:get/get.dart';
+import 'package:get/get.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../data/models/banner_model.dart';
 import '../../../data/repositories/product_repository.dart';
@@ -13,6 +13,7 @@ class ReelsController extends GetxController {
   final RxInt currentIndex = 0.obs;
   final RxBool isLoading = true.obs;
   final RxBool isMuted = false.obs;
+  final RxBool isTabVisible = true.obs;
 
   // Like & Comment counts per bannerId
   final RxMap<String, int> likesCount = <String, int>{}.obs;
@@ -20,19 +21,72 @@ class ReelsController extends GetxController {
   final RxMap<String, int> commentsCount = <String, int>{}.obs;
   final RxMap<String, bool> likePending = <String, bool>{}.obs;
 
+  Worker? _tabWorker;
+
   @override
   void onInit() {
     super.onInit();
     final args = Get.arguments;
     if (args is Map<String, dynamic>) {
-      if (args['banners'] is List<BannerModel>) {
-        banners.assignAll(args['banners'] as List<BannerModel>);
-      }
-      if (args['initialIndex'] is int) {
-        currentIndex.value = (args['initialIndex'] as int).clamp(0, (banners.length - 1).clamp(0, 999));
-      }
+      handleNewArguments(args);
     }
     _initData();
+  }
+
+  void setTabVisible(bool visible) {
+    if (isTabVisible.value == visible) return;
+    isTabVisible.value = visible;
+    if (visible) {
+      refreshBanners();
+    }
+  }
+
+  void checkTabVisibility() {
+    // Kept for backwards compatibility
+  }
+
+  void handleNewArguments(Map<String, dynamic> args) {
+    if (args['banners'] is List<BannerModel>) {
+      banners.assignAll(args['banners'] as List<BannerModel>);
+    }
+    final targetId = args['targetBannerId'] as String?;
+    if (targetId != null && targetId.isNotEmpty) {
+      final idx = banners.indexWhere((b) => b.id == targetId);
+      if (idx != -1) {
+        currentIndex.value = idx;
+      }
+    } else if (args['initialIndex'] is int) {
+      currentIndex.value = (args['initialIndex'] as int).clamp(0, (banners.length - 1).clamp(0, 999));
+    }
+    for (final banner in banners) {
+      loadBannerStats(banner.id);
+    }
+  }
+
+  Future<void> refreshBanners({List<BannerModel>? newBanners, String? targetBannerId, int? targetIndex}) async {
+    try {
+      if (newBanners != null && newBanners.isNotEmpty) {
+        banners.assignAll(newBanners);
+      } else {
+        final fetched = await _productRepo.fetchBanners();
+        banners.assignAll(fetched);
+      }
+
+      if (targetBannerId != null && targetBannerId.isNotEmpty) {
+        final idx = banners.indexWhere((b) => b.id == targetBannerId);
+        if (idx != -1) {
+          currentIndex.value = idx;
+        }
+      } else if (targetIndex != null) {
+        currentIndex.value = targetIndex.clamp(0, (banners.length - 1).clamp(0, 999));
+      } else if (currentIndex.value >= banners.length && banners.isNotEmpty) {
+        currentIndex.value = (banners.length - 1).clamp(0, 999);
+      }
+
+      for (final banner in banners) {
+        loadBannerStats(banner.id);
+      }
+    } catch (_) {}
   }
 
   Future<void> _initData() async {
@@ -112,11 +166,24 @@ class ReelsController extends GetxController {
     }
   }
 
+  /// Ensure liked state (used by double-tap: only likes, never unlikes)
+  Future<void> setLiked(String bannerId, {bool liked = true}) async {
+    final currentLiked = isLiked[bannerId] ?? false;
+    if (currentLiked == liked) return;
+    await toggleLike(bannerId);
+  }
+
   void onCommentAdded(String bannerId) {
     commentsCount[bannerId] = (commentsCount[bannerId] ?? 0) + 1;
   }
 
   void onCommentDeleted(String bannerId) {
     commentsCount[bannerId] = ((commentsCount[bannerId] ?? 1) - 1).clamp(0, 999999);
+  }
+
+  @override
+  void onClose() {
+    _tabWorker?.dispose();
+    super.onClose();
   }
 }

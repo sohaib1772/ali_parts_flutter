@@ -160,7 +160,7 @@ class ProductCardWidget extends StatelessWidget {
                     ),
                   ),
 
-                  // Bottom-Start: Stock Remaining Badge (Right in RTL)
+                  // Bottom-Start: Stock Availability Badge (Right in RTL)
                   if (product.isAvailable)
                     Positioned(
                       bottom: 6,
@@ -168,7 +168,7 @@ class ProductCardWidget extends StatelessWidget {
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: product.stockQty <= 5 ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+                          color: const Color(0xFF16A34A),
                           borderRadius: BorderRadius.circular(12),
                           boxShadow: const [
                             BoxShadow(
@@ -177,9 +177,9 @@ class ProductCardWidget extends StatelessWidget {
                             ),
                           ],
                         ),
-                        child: Text(
-                          product.stockQty <= 5 ? 'متبقي ${product.stockQty}' : 'متوفر · ${product.stockQty}',
-                          style: const TextStyle(
+                        child: const Text(
+                          'متوفر',
+                          style: TextStyle(
                             color: Colors.white,
                             fontSize: 8.5,
                             fontWeight: FontWeight.bold,
@@ -273,7 +273,7 @@ class ProductCardWidget extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              product.isAvailable ? 'متوفر · ${product.stockQty} قطعة' : 'غير متوفر',
+                              product.isAvailable ? 'متوفر' : 'غير متوفر',
                               style: TextStyle(
                                 color: product.isAvailable ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
                                 fontSize: 9,

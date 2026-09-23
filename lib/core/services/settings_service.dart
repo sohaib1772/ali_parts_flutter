@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import '../../app/config/api_constants.dart';
 import '../../data/models/app_setting_model.dart';
@@ -20,16 +21,36 @@ class SettingsService extends GetxService {
       final response = await _dioClient.dio.get(ApiConstants.appSettings, queryParameters: {
         'select': '*',
       });
-      if (response.statusCode == 200 && response.data is List) {
-        for (final item in response.data) {
-          final setting = AppSettingModel.fromJson(item as Map<String, dynamic>);
-          settings[setting.key] = setting.value;
-        }
-        AppLogger.d('Loaded ${settings.length} app settings');
+      // Supabase returns 200 or 206 (Partial Content)
+      if ((response.statusCode == 200 || response.statusCode == 206) && response.data is List) {
+        _parseSettings(response.data as List);
+        return;
       }
     } catch (e) {
-      AppLogger.e('Error loading app settings', e);
+      AppLogger.e('Error loading app settings, retrying with anon key', e);
     }
+
+    // Fallback: retry with anon key only (in case a stale auth token caused 403)
+    try {
+      final fallbackResponse = await _dioClient.dio.get(
+        ApiConstants.appSettings,
+        queryParameters: {'select': '*'},
+        options: Options(headers: {'Authorization': 'Bearer ${ApiConstants.anonKey}'}),
+      );
+      if ((fallbackResponse.statusCode == 200 || fallbackResponse.statusCode == 206) && fallbackResponse.data is List) {
+        _parseSettings(fallbackResponse.data as List);
+      }
+    } catch (e) {
+      AppLogger.e('Fallback settings fetch also failed', e);
+    }
+  }
+
+  void _parseSettings(List data) {
+    for (final item in data) {
+      final setting = AppSettingModel.fromJson(item as Map<String, dynamic>);
+      settings[setting.key] = setting.value;
+    }
+    AppLogger.d('Loaded ${settings.length} app settings');
   }
 
   String get storePhone => settings['store_phone'] ?? settings['whatsapp_number'] ?? '+9647855500585';

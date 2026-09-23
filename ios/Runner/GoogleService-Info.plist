@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>API_KEY</key>
-	<string>AIzaSyBXVbYjp0QOCz3iHGTgyYIXUD0WUKQTLC4</string>
+	<string>AIzaSyBKAavddICiGCokyjPsBs1RDgvPVW-Zi3Q</string>
 	<key>GCM_SENDER_ID</key>
 	<string>794940821827</string>
 	<key>PLIST_VERSION</key>
@@ -15,16 +15,16 @@
 	<key>STORAGE_BUCKET</key>
 	<string>maktab-ali.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
-	<false/>
+	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
-	<false/>
+	<false></false>
 	<key>IS_APPINVITE_ENABLED</key>
-	<false/>
+	<true></true>
 	<key>IS_GCM_ENABLED</key>
-	<true/>
+	<true></true>
 	<key>IS_SIGNIN_ENABLED</key>
-	<true/>
+	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:794940821827:ios:ac35a0449a0905b2309ff6</string>
+	<string>1:794940821827:ios:4c96fefb8acfa2e3309ff6</string>
 </dict>
 </plist>

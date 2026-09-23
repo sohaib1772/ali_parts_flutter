@@ -158,7 +158,10 @@ class AuthService extends GetxService {
       if (accessToken != null && accessToken.isNotEmpty && userId != null) {
         final response = await _authDio.get(
           '/auth/v1/user',
-          options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+          options: Options(
+            headers: {'Authorization': 'Bearer $accessToken'},
+            validateStatus: (status) => status != null && status < 500,
+          ),
         );
 
         if (response.statusCode == 200 && response.data != null) {
@@ -168,11 +171,12 @@ class AuthService extends GetxService {
           await fetchUserProfile();
           syncServices();
         } else {
+          AppLogger.d('Stored session expired or invalid (${response.statusCode}), attempting refresh...');
           await _tryRefreshToken();
         }
       }
     } catch (e) {
-      AppLogger.e('Failed to restore session', e);
+      AppLogger.d('Failed to restore session: $e');
       await _tryRefreshToken();
     }
   }
@@ -180,11 +184,17 @@ class AuthService extends GetxService {
   Future<bool> _tryRefreshToken() async {
     try {
       final refreshToken = await _secureStorage.read(AppConstants.secureKeyRefreshToken);
-      if (refreshToken == null || refreshToken.isEmpty) return false;
+      if (refreshToken == null || refreshToken.isEmpty) {
+        await _clearSession();
+        return false;
+      }
 
       final response = await _authDio.post(
         '/auth/v1/token?grant_type=refresh_token',
         data: {'refresh_token': refreshToken},
+        options: Options(
+          validateStatus: (status) => status != null && status < 500,
+        ),
       );
 
       if (response.statusCode == 200 && response.data != null) {
@@ -195,9 +205,12 @@ class AuthService extends GetxService {
           Get.find<NotificationService>().updateRealtimeAuth(newToken);
         }
         return true;
+      } else {
+        AppLogger.d('Refresh token rejected (${response.statusCode}), clearing session.');
+        await _clearSession();
       }
     } catch (e) {
-      AppLogger.e('Token refresh failed', e);
+      AppLogger.d('Token refresh failed: $e');
       await _clearSession();
     }
     return false;

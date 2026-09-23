@@ -26,6 +26,7 @@ class ApiConstants {
   static const String replacementStatusLog = '/rest/v1/replacement_status_log';
   static const String rpcAddCartItem = '/rest/v1/rpc/add_cart_item';
   static const String rpcRegisterDeviceToken = '/rest/v1/rpc/register_device_token';
+  static const String rpcLogNotificationEvent = '/rest/v1/rpc/log_notification_event';
   static const String rpcAdminBroadcastNotification = '/rest/v1/rpc/admin_broadcast_notification';
   static const String rpcAdminBroadcastAudienceCount = '/rest/v1/rpc/admin_broadcast_audience_count';
   static const String rpcAdminDeleteUser = '/rest/v1/rpc/admin_delete_user';
@@ -37,4 +38,5 @@ class ApiConstants {
   static const String authUser = '/auth/v1/user';
   static const String authOtp = '/auth/v1/otp';
   static const String authVerify = '/auth/v1/verify';
+  static const String apiCommentNotify = 'https://maktabali.com/api/banner-comments/notify';
 }

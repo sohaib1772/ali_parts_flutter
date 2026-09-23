@@ -20,7 +20,7 @@ class MainNavView extends GetView<MainNavController> {
       const HomeView(),
       const FavoritesView(),
       const OrdersView(),
-      const SizedBox.shrink(), // WhatsApp tab
+      const SizedBox.shrink(), // Reels is a dedicated full-screen page
       const AccountView(),
     ];
 
@@ -38,8 +38,8 @@ class MainNavView extends GetView<MainNavController> {
         inactiveIcon: IconsaxPlusLinear.box,
       ),
       AppleGlassNavItem(
-        activeIcon: IconsaxPlusBold.messages_2,
-        inactiveIcon: IconsaxPlusLinear.messages_2,
+        activeIcon: IconsaxPlusBold.video_play,
+        inactiveIcon: IconsaxPlusLinear.video_play,
       ),
       AppleGlassNavItem(
         activeIcon: IconsaxPlusBold.user,
@@ -61,15 +61,59 @@ class MainNavView extends GetView<MainNavController> {
         return Scaffold(
           backgroundColor: AppColors.background,
           extendBody: true, // Allows translucent glass effect to float seamlessly over content
-          body: IndexedStack(
-            index: selectedIdx,
-            children: screens,
+          body: Stack(
+            children: [
+              IndexedStack(
+                index: selectedIdx,
+                children: screens,
+              ),
+
+              // Floating WhatsApp Action Button on the RIGHT (above bottom glass bar)
+              if (selectedIdx != 3) // Hide during full-screen video reels for uninterrupted viewing
+                Positioned(
+                  bottom: MediaQuery.of(context).padding.bottom > 0 ? 84 : 90,
+                  right: 18,
+                  child: Material(
+                    color: Colors.transparent,
+                    shape: const CircleBorder(),
+                    elevation: 6,
+                    shadowColor: const Color(0xFF25D366).withValues(alpha: 0.4),
+                    child: InkWell(
+                      onTap: controller.showWhatsAppDialog,
+                      borderRadius: BorderRadius.circular(28),
+                      child: Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF25D366), Color(0xFF1EBE5D)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.35),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            IconsaxPlusBold.messages_2,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
 
           // Apple TV / iOS Floating Glassmorphic Pill Navigation Bar (Icons Only)
           bottomNavigationBar: AppleGlassNavBar(
             selectedIndex: selectedIdx,
-            onTabSelected: (index) => controller.changeTab(index),
+            onTabSelected: (index) => controller.onTabTapped(index),
             items: navItems,
             badgeCounts: [
               0,

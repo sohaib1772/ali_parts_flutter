@@ -72,7 +72,7 @@ class CartService extends GetxService {
       if (current.quantity >= maxStock) {
         Get.snackbar(
           'تنبيه الكمية',
-          'تمت إضافة الحد الأقصى المتوفر بالمخزن ($maxStock قطعة)',
+          'تمت إضافة الحد الأقصى المتوفر في المخزن',
           snackPosition: SnackPosition.TOP,
           backgroundColor: AppColors.navyMedium,
           colorText: Colors.white,
@@ -131,7 +131,7 @@ class CartService extends GetxService {
       if (newQuantity > maxStock) {
         Get.snackbar(
           'تنبيه الكمية',
-          'الكمية المتوفرة في المخزن هي $maxStock فقط',
+          'تم الوصول إلى الحد الأقصى للكمية المتوفرة',
           snackPosition: SnackPosition.TOP,
           backgroundColor: AppColors.navyMedium,
           colorText: Colors.white,

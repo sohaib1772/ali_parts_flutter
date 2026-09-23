@@ -229,7 +229,16 @@ class ReelsRepository {
       );
 
       if ((res.statusCode == 200 || res.statusCode == 201) && res.data is List && (res.data as List).isNotEmpty) {
-        return BannerCommentModel.fromJson((res.data as List).first as Map<String, dynamic>);
+        final comment = BannerCommentModel.fromJson((res.data as List).first as Map<String, dynamic>);
+        _dispatchNotification(
+          bannerId: bannerId,
+          commentId: comment.id,
+          authorId: effectiveUserId,
+          parentId: parentId,
+          content: content,
+          isAdminReply: isAdminReply,
+        );
+        return comment;
       }
     } on DioException catch (e) {
       // If office reply was rejected by DB policy (e.g. staff without admin role), retry as regular comment
@@ -284,5 +293,31 @@ class ReelsRepository {
       AppLogger.e('Error blocking user $userId', e);
       return false;
     }
+  }
+
+  void _dispatchNotification({
+    required String bannerId,
+    required String commentId,
+    required String authorId,
+    String? parentId,
+    required String content,
+    required bool isAdminReply,
+  }) {
+    Future.microtask(() async {
+      try {
+        await _dio.post(
+          ApiConstants.apiCommentNotify,
+          data: {
+            'banner_id': bannerId,
+            'comment_id': commentId,
+            'parent_id': parentId,
+            'content': content.trim(),
+            'is_admin_reply': isAdminReply,
+          },
+        );
+      } catch (e) {
+        AppLogger.d('Background comment notification dispatch failed (non-critical): $e');
+      }
+    });
   }
 }
