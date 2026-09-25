@@ -52,8 +52,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   // ──────────────────────────────────────────────────────────────────
   Future<NotificationService> init() async {
     // 1. Local notifications plugin
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -79,8 +80,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     if (launchDetails?.didNotificationLaunchApp == true &&
         launchDetails?.notificationResponse?.payload != null) {
       try {
-        _pendingColdStartData = jsonDecode(
-            launchDetails!.notificationResponse!.payload!) as Map<String, dynamic>;
+        _pendingColdStartData =
+            jsonDecode(launchDetails!.notificationResponse!.payload!)
+                as Map<String, dynamic>;
       } catch (_) {}
     }
 
@@ -94,6 +96,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       alert: true,
       announcement: false,
       badge: true,
+
       carPlay: false,
       criticalAlert: false,
       provisional: false,
@@ -102,20 +105,23 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
     if (settings.authorizationStatus == AuthorizationStatus.denied) {
       AppLogger.w('Notification permission was denied by the user');
-      unawaited(_logNotificationEvent(
-        eventType: 'permission_denied',
-        status: 'warning',
-        title: 'رفض إذن الإشعارات من المستخدم',
-        message: 'المستخدم رفض منح إذن الإشعارات في نظام التشغيل.',
-        errorDetails: 'AuthorizationStatus.denied',
-      ));
+      unawaited(
+        _logNotificationEvent(
+          eventType: 'permission_denied',
+          status: 'warning',
+          title: 'رفض إذن الإشعارات من المستخدم',
+          message: 'المستخدم رفض منح إذن الإشعارات في نظام التشغيل.',
+          errorDetails: 'AuthorizationStatus.denied',
+        ),
+      );
     }
 
-    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
 
     // 4. Lifecycle observer (reconnect on resume)
     WidgetsBinding.instance.addObserver(this);
@@ -142,8 +148,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     await stopListening();
     _currentUserId = userId;
 
-    final token = await Get.find<SecureStorageService>()
-        .read(AppConstants.secureKeyAccessToken);
+    final token = await Get.find<SecureStorageService>().read(
+      AppConstants.secureKeyAccessToken,
+    );
 
     // ── Realtime client ───────────────────────────────────────────
     final wsBase = ApiConstants.baseUrl.replaceFirst('https://', 'wss://');
@@ -315,8 +322,16 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     });
   }
 
-  int _deriveTrayId({String? orderId, String? notifId, String? title, String? type}) {
-    if (type != null && type.trim().isNotEmpty && orderId != null && orderId.trim().isNotEmpty) {
+  int _deriveTrayId({
+    String? orderId,
+    String? notifId,
+    String? title,
+    String? type,
+  }) {
+    if (type != null &&
+        type.trim().isNotEmpty &&
+        orderId != null &&
+        orderId.trim().isNotEmpty) {
       return ('${type.trim()}:${orderId.trim()}'.hashCode & 0x7FFFFFFF);
     }
     if (orderId != null && orderId.trim().isNotEmpty) {
@@ -379,7 +394,12 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
     // Only show system tray notification if not already shown
     if (title.isNotEmpty) {
-      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title, type: type);
+      final trayId = _deriveTrayId(
+        orderId: orderId,
+        notifId: notifId,
+        title: title,
+        type: type,
+      );
       showLocalNotification(
         id: trayId,
         title: title,
@@ -411,8 +431,10 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     final notifId = message.data['notification_id'] as String?;
     final status = message.data['status'] as String?;
     final type = message.data['type'] as String?;
-    final title = message.notification?.title ?? message.data['title'] as String? ?? '';
-    final body = message.notification?.body ?? message.data['body'] as String? ?? '';
+    final title =
+        message.notification?.title ?? message.data['title'] as String? ?? '';
+    final body =
+        message.notification?.body ?? message.data['body'] as String? ?? '';
     final messageId = message.messageId;
 
     final keys = _extractDedupKeys(
@@ -430,12 +452,19 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
     // If already processed by Realtime, DO NOT show duplicate tray notification!
     if (isDuplicate) {
-      AppLogger.d('FCM foreground ignored (already handled by Realtime): $keys');
+      AppLogger.d(
+        'FCM foreground ignored (already handled by Realtime): $keys',
+      );
       return;
     }
 
     if (title.isNotEmpty) {
-      final trayId = _deriveTrayId(orderId: orderId, notifId: notifId, title: title, type: type);
+      final trayId = _deriveTrayId(
+        orderId: orderId,
+        notifId: notifId,
+        title: title,
+        type: type,
+      );
       showLocalNotification(
         id: trayId,
         title: title,
@@ -526,7 +555,8 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
             status: 'failure',
             platform: 'ios',
             title: 'تعذر استلام APNs Token في iPhone',
-            message: 'لم يتمكن جهاز الآيفون من الحصول على APNs Token من خوادم Apple بعد 5 محاولات.',
+            message:
+                'لم يتمكن جهاز الآيفون من الحصول على APNs Token من خوادم Apple بعد 5 محاولات.',
             errorDetails: 'FirebaseMessaging.getAPNSToken() returned null.',
             deviceInfo: deviceInfo,
           );
@@ -599,8 +629,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
       // Listen for token refresh
       _tokenRefreshSub?.cancel();
-      _tokenRefreshSub =
-          FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+      _tokenRefreshSub = FirebaseMessaging.instance.onTokenRefresh.listen((
+        newToken,
+      ) async {
         try {
           await dio.post(
             ApiConstants.rpcRegisterDeviceToken,
@@ -667,7 +698,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       type: message.data['type'] as String?,
       orderId: message.data['order_id'] as String?,
       productId: message.data['product_id'] as String?,
-      bannerId: (message.data['banner_id'] as String?) ?? (message.data['status'] as String?),
+      bannerId:
+          (message.data['banner_id'] as String?) ??
+          (message.data['status'] as String?),
       status: message.data['status'] as String?,
     );
   }
@@ -688,9 +721,13 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
   }) async {
     final effectiveBannerId = (bannerId != null && bannerId.isNotEmpty)
         ? bannerId
-        : ((status != null && status.isNotEmpty && status.length > 20) ? status : null);
+        : ((status != null && status.isNotEmpty && status.length > 20)
+              ? status
+              : null);
 
-    AppLogger.d('Navigating for notification: type=$type, orderId=$orderId, productId=$productId, bannerId=$effectiveBannerId');
+    AppLogger.d(
+      'Navigating for notification: type=$type, orderId=$orderId, productId=$productId, bannerId=$effectiveBannerId',
+    );
 
     // Fallback: if type is missing but orderId is provided, treat as order_status
     final resolvedType = (type == null || type.isEmpty)
@@ -725,7 +762,9 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
 
       case 'admin_new_replacement':
         if (Get.isRegistered<MainNavController>()) {
-          Get.find<MainNavController>().changeTab(3); // Assuming admin tab or just go to notifications
+          Get.find<MainNavController>().changeTab(
+            3,
+          ); // Assuming admin tab or just go to notifications
           Get.until((route) => Get.currentRoute == AppRoutes.mainNav);
         } else {
           Get.offAllNamed(AppRoutes.mainNav);
@@ -782,12 +821,15 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         break;
 
       case 'admin_broadcast':
-        Get.toNamed(AppRoutes.broadcastDetail, arguments: {
-          'title': title ?? '',
-          'body': body ?? '',
-          'image_url': imageUrl ?? '',
-          'created_at': createdAt ?? '',
-        });
+        Get.toNamed(
+          AppRoutes.broadcastDetail,
+          arguments: {
+            'title': title ?? '',
+            'body': body ?? '',
+            'image_url': imageUrl ?? '',
+            'created_at': createdAt ?? '',
+          },
+        );
         break;
 
       default:
@@ -807,7 +849,8 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
           type: data['type'] as String?,
           orderId: data['order_id'] as String?,
           productId: data['product_id'] as String?,
-          bannerId: (data['banner_id'] as String?) ?? (data['status'] as String?),
+          bannerId:
+              (data['banner_id'] as String?) ?? (data['status'] as String?),
           status: data['status'] as String?,
         );
       });
@@ -855,8 +898,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
       );
       if ((res.statusCode == 200 || res.statusCode == 206) &&
           res.data is List) {
-        notifications.value =
-            List<Map<String, dynamic>>.from(res.data as List);
+        notifications.value = List<Map<String, dynamic>>.from(res.data as List);
       }
     } catch (e) {
       AppLogger.e('Failed to fetch notifications', e);
@@ -968,12 +1010,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     required String body,
     String? payload,
   }) =>
-      showLocalNotification(
-        id: id,
-        title: title,
-        body: body,
-        payload: payload,
-      );
+      showLocalNotification(id: id, title: title, body: body, payload: payload);
 
   // ──────────────────────────────────────────────────────────────────
   @override
