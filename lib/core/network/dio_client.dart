@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import '../../app/config/api_constants.dart';
 import '../../app/config/app_constants.dart';
 import '../services/auth_service.dart';
@@ -24,21 +25,24 @@ class DioClient {
       ),
     );
 
+    dio.interceptors.add(PrettyDioLogger());
+
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           // Use user's access token if logged in, else use anon key
-          final token = await _secureStorage.read(AppConstants.secureKeyAccessToken);
+          final token = await _secureStorage.read(
+            AppConstants.secureKeyAccessToken,
+          );
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
           } else {
             options.headers['Authorization'] = 'Bearer ${ApiConstants.anonKey}';
           }
-          AppLogger.d('DIO Request: ${options.method} ${options.path} ${options.queryParameters}');
+
           return handler.next(options);
         },
         onResponse: (response, handler) {
-          AppLogger.d('DIO Response: ${response.statusCode} for ${response.requestOptions.path}');
           return handler.next(response);
         },
         onError: (DioException error, handler) async {
@@ -50,19 +54,20 @@ class DioClient {
                 final refreshed = await authService.refreshAndRetry();
                 if (refreshed) {
                   // Retry the original request with new token
-                  final token = await _secureStorage.read(AppConstants.secureKeyAccessToken);
+                  final token = await _secureStorage.read(
+                    AppConstants.secureKeyAccessToken,
+                  );
                   if (token != null) {
-                    error.requestOptions.headers['Authorization'] = 'Bearer $token';
+                    error.requestOptions.headers['Authorization'] =
+                        'Bearer $token';
                     final retryResponse = await dio.fetch(error.requestOptions);
                     return handler.resolve(retryResponse);
                   }
                 }
               }
-            } catch (e) {
-              AppLogger.e('Token refresh & retry failed', e);
-            }
+            } catch (e) {}
           }
-          AppLogger.e('DIO Error: ${error.response?.statusCode} ${error.message} for ${error.requestOptions.path}');
+
           return handler.next(error);
         },
       ),

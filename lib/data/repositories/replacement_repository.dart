@@ -15,13 +15,11 @@ class ReplacementRepository {
     try {
       final response = await _dioClient.dio.get(
         ApiConstants.replacementRequests,
-        queryParameters: {
-          'user_id': 'eq.$userId',
-          'order': 'created_at.desc',
-        },
+        queryParameters: {'user_id': 'eq.$userId', 'order': 'created_at.desc'},
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 206) && response.data is List) {
+      if ((response.statusCode == 200 || response.statusCode == 206) &&
+          response.data is List) {
         return (response.data as List)
             .map((e) => ReplacementModel.fromJson(e as Map<String, dynamic>))
             .toList();
@@ -33,7 +31,9 @@ class ReplacementRepository {
   }
 
   /// Fetches replacement requests for a specific order
-  Future<List<ReplacementModel>> fetchReplacementsByOrderId(String orderId) async {
+  Future<List<ReplacementModel>> fetchReplacementsByOrderId(
+    String orderId,
+  ) async {
     try {
       final response = await _dioClient.dio.get(
         ApiConstants.replacementRequests,
@@ -43,7 +43,8 @@ class ReplacementRepository {
         },
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 206) && response.data is List) {
+      if ((response.statusCode == 200 || response.statusCode == 206) &&
+          response.data is List) {
         return (response.data as List)
             .map((e) => ReplacementModel.fromJson(e as Map<String, dynamic>))
             .toList();
@@ -59,24 +60,29 @@ class ReplacementRepository {
     try {
       final response = await _dioClient.dio.get(
         ApiConstants.replacementRequests,
-        queryParameters: {
-          'id': 'eq.$id',
-          'limit': 1,
-        },
+        queryParameters: {'id': 'eq.$id', 'limit': 1},
       );
 
       if ((response.statusCode == 200 || response.statusCode == 206) &&
           response.data is List &&
           (response.data as List).isNotEmpty) {
-        final row = Map<String, dynamic>.from((response.data as List).first as Map);
+        final row = Map<String, dynamic>.from(
+          (response.data as List).first as Map,
+        );
         final userId = row['user_id'] as String?;
         if (userId != null && userId.isNotEmpty) {
           try {
             final pRes = await _dioClient.dio.get(
               ApiConstants.profiles,
-              queryParameters: {'id': 'eq.$userId', 'select': 'id,full_name,phone', 'limit': 1},
+              queryParameters: {
+                'id': 'eq.$userId',
+                'select': 'id,full_name,phone',
+                'limit': 1,
+              },
             );
-            if ((pRes.statusCode == 200 || pRes.statusCode == 206) && pRes.data is List && (pRes.data as List).isNotEmpty) {
+            if ((pRes.statusCode == 200 || pRes.statusCode == 206) &&
+                pRes.data is List &&
+                (pRes.data as List).isNotEmpty) {
               row['profiles'] = (pRes.data as List).first;
             }
           } catch (_) {}
@@ -90,7 +96,9 @@ class ReplacementRepository {
   }
 
   /// Fetches status log entries for a replacement request
-  Future<List<ReplacementStatusLogModel>> fetchStatusLog(String requestId) async {
+  Future<List<ReplacementStatusLogModel>> fetchStatusLog(
+    String requestId,
+  ) async {
     try {
       final response = await _dioClient.dio.get(
         ApiConstants.replacementStatusLog,
@@ -100,9 +108,13 @@ class ReplacementRepository {
         },
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 206) && response.data is List) {
+      if ((response.statusCode == 200 || response.statusCode == 206) &&
+          response.data is List) {
         return (response.data as List)
-            .map((e) => ReplacementStatusLogModel.fromJson(e as Map<String, dynamic>))
+            .map(
+              (e) =>
+                  ReplacementStatusLogModel.fromJson(e as Map<String, dynamic>),
+            )
             .toList();
       }
     } catch (e) {
@@ -121,6 +133,13 @@ class ReplacementRepository {
     required String reason,
     List<String> attachments = const [],
   }) async {
+    print(userId);
+    print(orderId);
+    print(orderItemId);
+    print(productId);
+    print(productNameAr);
+    print(reason);
+    print(attachments);
     try {
       final response = await _dioClient.dio.post(
         ApiConstants.replacementRequests,
@@ -137,11 +156,16 @@ class ReplacementRepository {
         options: Options(headers: {'Prefer': 'return=representation'}),
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 201) && response.data != null) {
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          response.data != null) {
         if (response.data is List && (response.data as List).isNotEmpty) {
-          return ReplacementModel.fromJson((response.data as List).first as Map<String, dynamic>);
+          return ReplacementModel.fromJson(
+            (response.data as List).first as Map<String, dynamic>,
+          );
         } else if (response.data is Map) {
-          return ReplacementModel.fromJson(response.data as Map<String, dynamic>);
+          return ReplacementModel.fromJson(
+            response.data as Map<String, dynamic>,
+          );
         }
       }
     } catch (e) {
@@ -158,18 +182,18 @@ class ReplacementRepository {
   }) async {
     try {
       final fileName = file.name.replaceAll(RegExp(r'[^\w.\-]+'), '_');
-      final pathKey = '$userId/$requestId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+      final pathKey =
+          '$userId/$requestId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
 
       final bytes = await file.readAsBytes();
-      final uploadUrl = '${ApiConstants.baseUrl}/storage/v1/object/replacement-attachments/$pathKey';
+      final uploadUrl =
+          '${ApiConstants.baseUrl}/storage/v1/object/replacement-attachments/$pathKey';
 
       final response = await _dioClient.dio.post(
         uploadUrl,
         data: bytes,
         options: Options(
-          headers: {
-            'Content-Type': file.mimeType ?? 'image/jpeg',
-          },
+          headers: {'Content-Type': file.mimeType ?? 'image/jpeg'},
         ),
       );
 
@@ -183,7 +207,10 @@ class ReplacementRepository {
   }
 
   /// Updates the attachments list of a replacement request
-  Future<bool> updateAttachments(String requestId, List<String> attachments) async {
+  Future<bool> updateAttachments(
+    String requestId,
+    List<String> attachments,
+  ) async {
     try {
       final response = await _dioClient.dio.patch(
         ApiConstants.replacementRequests,
@@ -244,15 +271,19 @@ class ReplacementRepository {
     try {
       final response = await _dioClient.dio.get(
         ApiConstants.replacementRequests,
-        queryParameters: {
-          'order': 'created_at.desc',
-          'limit': 200,
-        },
+        queryParameters: {'order': 'created_at.desc', 'limit': 200},
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 206) && response.data is List) {
-        final list = (response.data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        final userIds = list.map((e) => e['user_id'] as String?).where((id) => id != null && id.isNotEmpty).toSet().toList();
+      if ((response.statusCode == 200 || response.statusCode == 206) &&
+          response.data is List) {
+        final list = (response.data as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        final userIds = list
+            .map((e) => e['user_id'] as String?)
+            .where((id) => id != null && id.isNotEmpty)
+            .toSet()
+            .toList();
 
         if (userIds.isNotEmpty) {
           try {
@@ -263,7 +294,8 @@ class ReplacementRepository {
                 'select': 'id,full_name,phone',
               },
             );
-            if ((pRes.statusCode == 200 || pRes.statusCode == 206) && pRes.data is List) {
+            if ((pRes.statusCode == 200 || pRes.statusCode == 206) &&
+                pRes.data is List) {
               final pMap = <String, dynamic>{};
               for (final p in (pRes.data as List)) {
                 if (p is Map && p['id'] != null) {

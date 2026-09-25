@@ -40,12 +40,15 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
     } else {
       controller.refreshBanners();
     }
-    _pageController = PageController(initialPage: controller.currentIndex.value);
+    _pageController = PageController(
+      initialPage: controller.currentIndex.value,
+    );
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       controller.setTabVisible(false);
     } else if (state == AppLifecycleState.resumed) {
       controller.setTabVisible(true);
@@ -96,7 +99,7 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
         child: Scaffold(
           backgroundColor: Colors.black,
           body: Obx(() {
-            if (controller.isLoading.value && controller.banners.isEmpty) {
+            if (controller.isLoading.value) {
               return const Center(
                 child: CircularProgressIndicator(color: AppColors.gold),
               );
@@ -107,11 +110,19 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(IconsaxPlusBold.gallery, color: Colors.white54, size: 54),
+                    const Icon(
+                      IconsaxPlusBold.gallery,
+                      color: Colors.white54,
+                      size: 54,
+                    ),
                     const SizedBox(height: 14),
                     Text(
                       'لا توجد عروض حالياً',
-                      style: GoogleFonts.cairo(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.cairo(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     ElevatedButton(
@@ -125,9 +136,14 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.gold,
                         foregroundColor: const Color(0xFF0A192F),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(100),
+                        ),
                       ),
-                      child: Text('الرجوع للرئيسية', style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
+                      child: Text(
+                        'الرجوع للرئيسية',
+                        style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ),
@@ -145,7 +161,8 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                   itemBuilder: (ctx, i) {
                     final banner = controller.banners[i];
                     final isCurrentPage = controller.currentIndex.value == i;
-                    final isEffectiveActive = isCurrentPage && controller.isTabVisible.value;
+                    final isEffectiveActive =
+                        isCurrentPage && controller.isTabVisible.value;
                     return _ReelItemCard(
                       banner: banner,
                       isActive: isEffectiveActive,
@@ -180,41 +197,53 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.45),
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.2),
+                            ),
                           ),
-                          child: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 18),
+                          child: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                         ),
                       ),
 
                       // Mute / Unmute Button
-                      Obx(() => InkWell(
-                      onTap: controller.toggleMute,
-                      borderRadius: BorderRadius.circular(100),
-                      child: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-                        ),
-                        child: Icon(
-                          controller.isMuted.value ? IconsaxPlusBold.volume_cross : IconsaxPlusBold.volume_high,
-                          color: Colors.white,
-                          size: 19,
+                      Obx(
+                        () => InkWell(
+                          onTap: controller.toggleMute,
+                          borderRadius: BorderRadius.circular(100),
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.2),
+                              ),
+                            ),
+                            child: Icon(
+                              controller.isMuted.value
+                                  ? IconsaxPlusBold.volume_cross
+                                  : IconsaxPlusBold.volume_high,
+                              color: Colors.white,
+                              size: 19,
+                            ),
+                          ),
                         ),
                       ),
-                    )),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          );
-        }),
+              ],
+            );
+          }),
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 class _ReelItemCard extends StatefulWidget {
@@ -236,7 +265,8 @@ class _ReelItemCard extends StatefulWidget {
   State<_ReelItemCard> createState() => _ReelItemCardState();
 }
 
-class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMixin {
+class _ReelItemCardState extends State<_ReelItemCard>
+    with TickerProviderStateMixin {
   VideoPlayerController? _videoCtrl;
   bool _isVideoInitialized = false;
   bool _isPlaying = false;
@@ -256,7 +286,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
   late Animation<double> _heartScale;
   late Animation<double> _heartOpacity;
 
-  bool get _hasVideo => widget.banner.videoUrl != null && widget.banner.videoUrl!.trim().isNotEmpty;
+  bool get _hasVideo =>
+      widget.banner.videoUrl != null &&
+      widget.banner.videoUrl!.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -267,14 +299,38 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
     );
 
     _heartScale = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.3).chain(CurveTween(curve: Curves.easeOutBack)), weight: 40),
-      TweenSequenceItem(tween: Tween(begin: 1.3, end: 1.05).chain(CurveTween(curve: Curves.easeInOut)), weight: 25),
-      TweenSequenceItem(tween: Tween(begin: 1.05, end: 1.35).chain(CurveTween(curve: Curves.easeIn)), weight: 35),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 0.0,
+          end: 1.3,
+        ).chain(CurveTween(curve: Curves.easeOutBack)),
+        weight: 40,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 1.3,
+          end: 1.05,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 25,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 1.05,
+          end: 1.35,
+        ).chain(CurveTween(curve: Curves.easeIn)),
+        weight: 35,
+      ),
     ]).animate(_heartAnimCtrl);
 
     _heartOpacity = TweenSequence<double>([
       TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.0), weight: 65),
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0).chain(CurveTween(curve: Curves.easeOut)), weight: 35),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 1.0,
+          end: 0.0,
+        ).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 35,
+      ),
     ]).animate(_heartAnimCtrl);
 
     _muteWorker = ever(widget.controller.isMuted, (bool muted) {
@@ -288,7 +344,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
       } else if (widget.isActive) {
         if (_videoCtrl != null && _isVideoInitialized) {
           if (_videoCtrl!.value.isCompleted ||
-              (_totalDuration > Duration.zero && _currentPosition >= _totalDuration - const Duration(milliseconds: 500))) {
+              (_totalDuration > Duration.zero &&
+                  _currentPosition >=
+                      _totalDuration - const Duration(milliseconds: 500))) {
             _videoCtrl!.seekTo(Duration.zero);
           }
           _videoCtrl!.play();
@@ -309,7 +367,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
       if (widget.isActive && !oldWidget.isActive) {
         _didTriggerEnd = false;
         if (_videoCtrl!.value.isCompleted ||
-            (_totalDuration > Duration.zero && _currentPosition >= _totalDuration - const Duration(milliseconds: 500))) {
+            (_totalDuration > Duration.zero &&
+                _currentPosition >=
+                    _totalDuration - const Duration(milliseconds: 500))) {
           _videoCtrl!.seekTo(Duration.zero);
         }
         _videoCtrl!.play();
@@ -332,7 +392,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
         if (streamUrl != null && streamUrl.isNotEmpty) {
           playUrl = streamUrl;
         } else {
-          AppLogger.w('Could not resolve stream URL for YouTube video: $rawUrl');
+          AppLogger.w(
+            'Could not resolve stream URL for YouTube video: $rawUrl',
+          );
         }
       }
 
@@ -342,7 +404,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
       final ctrl = VideoPlayerController.networkUrl(uri);
       _videoCtrl = ctrl;
       await ctrl.initialize();
-      await ctrl.setLooping(false); // DO NOT loop so it triggers onVideoFinished
+      await ctrl.setLooping(
+        false,
+      ); // DO NOT loop so it triggers onVideoFinished
       await ctrl.setVolume(widget.controller.isMuted.value ? 0 : 1);
       ctrl.addListener(_videoListener);
 
@@ -392,7 +456,8 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
           widget.onVideoFinished();
         }
       }
-    } else if (_didTriggerEnd && val.position < val.duration - const Duration(milliseconds: 500)) {
+    } else if (_didTriggerEnd &&
+        val.position < val.duration - const Duration(milliseconds: 500)) {
       _didTriggerEnd = false;
     }
   }
@@ -473,9 +538,12 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     // Seek bar sits directly near the bottom screen edge
-    final double seekBottom = bottomPadding > 0 ? (bottomPadding * 0.25).clamp(4.0, 10.0) : 2.0;
+    final double seekBottom = bottomPadding > 0
+        ? (bottomPadding * 0.25).clamp(4.0, 10.0)
+        : 2.0;
     // Caption & Action rail baseline offset - comfortably positioned near the bottom
-    final double contentBottom = (bottomPadding > 0 ? bottomPadding : 10.0) + 12.0;
+    final double contentBottom =
+        (bottomPadding > 0 ? bottomPadding : 10.0) + 12.0;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -485,10 +553,7 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
         fit: StackFit.expand,
         children: [
           // Media Layer (Video or Image)
-          if (_hasVideo)
-            _buildVideoLayer()
-          else
-            _buildImageLayer(),
+          if (_hasVideo) _buildVideoLayer() else _buildImageLayer(),
 
           // Double Tap Heart Burst Animation
           AnimatedBuilder(
@@ -505,7 +570,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFEF4444).withValues(alpha: 0.4 * _heartOpacity.value),
+                            color: const Color(
+                              0xFFEF4444,
+                            ).withValues(alpha: 0.4 * _heartOpacity.value),
                             blurRadius: 40,
                             spreadRadius: 10,
                           ),
@@ -532,7 +599,11 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                   color: Colors.black.withValues(alpha: 0.5),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 48),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 48,
+                ),
               ),
             ),
 
@@ -564,16 +635,21 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
             bottom: contentBottom,
             left: 14,
             child: Obx(() {
-              final isLiked = widget.controller.isLiked[widget.banner.id] ?? false;
-              final likesCount = widget.controller.likesCount[widget.banner.id] ?? 0;
-              final commentsCount = widget.controller.commentsCount[widget.banner.id] ?? 0;
+              final isLiked =
+                  widget.controller.isLiked[widget.banner.id] ?? false;
+              final likesCount =
+                  widget.controller.likesCount[widget.banner.id] ?? 0;
+              final commentsCount =
+                  widget.controller.commentsCount[widget.banner.id] ?? 0;
 
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Like Button with count
                   _buildRailButton(
-                    icon: isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                    icon: isLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
                     iconColor: isLiked ? const Color(0xFFEF4444) : Colors.white,
                     label: '$likesCount',
                     onTap: () => widget.controller.toggleLike(widget.banner.id),
@@ -589,8 +665,10 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                       ReelsCommentsSheet.show(
                         context,
                         widget.banner.id,
-                        onCommentAdded: () => widget.controller.onCommentAdded(widget.banner.id),
-                        onCommentDeleted: () => widget.controller.onCommentDeleted(widget.banner.id),
+                        onCommentAdded: () =>
+                            widget.controller.onCommentAdded(widget.banner.id),
+                        onCommentDeleted: () => widget.controller
+                            .onCommentDeleted(widget.banner.id),
                       );
                     },
                   ),
@@ -603,7 +681,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                     label: 'مشاركة',
                     onTap: () {
                       HapticFeedback.selectionClick();
-                      final title = widget.banner.titleAr ?? 'عرض مميز من علي لقطع الغيار';
+                      final title =
+                          widget.banner.titleAr ??
+                          'عرض مميز من علي لقطع الغيار';
                       final link = widget.banner.link?.trim() ?? '';
                       final shareText = link.isNotEmpty
                           ? '$title\n$link\n\nتطبيق علي لقطع الغيار'
@@ -625,7 +705,8 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (widget.banner.titleAr != null && widget.banner.titleAr!.isNotEmpty)
+                if (widget.banner.titleAr != null &&
+                    widget.banner.titleAr!.isNotEmpty)
                   Text(
                     widget.banner.titleAr!,
                     style: GoogleFonts.cairo(
@@ -639,7 +720,8 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                       ],
                     ),
                   ),
-                if (widget.banner.subtitleAr != null && widget.banner.subtitleAr!.isNotEmpty) ...[
+                if (widget.banner.subtitleAr != null &&
+                    widget.banner.subtitleAr!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
                     widget.banner.subtitleAr!,
@@ -654,26 +736,38 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                     ),
                   ),
                 ],
-                if (widget.banner.link != null && widget.banner.link!.trim().isNotEmpty) ...[
+                if (widget.banner.link != null &&
+                    widget.banner.link!.trim().isNotEmpty) ...[
                   const SizedBox(height: 10),
                   ElevatedButton.icon(
                     onPressed: () async {
                       final uri = Uri.tryParse(widget.banner.link!.trim());
                       if (uri != null && await canLaunchUrl(uri)) {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
                       }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.gold,
                       foregroundColor: const Color(0xFF0A192F),
                       elevation: 4,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 7,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(100),
+                      ),
                     ),
                     icon: const Icon(IconsaxPlusBold.shopping_cart, size: 15),
                     label: Text(
                       'تسوّق الآن',
-                      style: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -689,11 +783,17 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
               right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.7), width: 1.2),
+                    border: Border.all(
+                      color: AppColors.gold.withValues(alpha: 0.7),
+                      width: 1.2,
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.5),
@@ -716,7 +816,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
             ),
 
           // Interactive Progress / Seek Bar (تقديم وتأخير) - Lowered right to the bottom edge
-          if (_hasVideo && _isVideoInitialized && _totalDuration > Duration.zero)
+          if (_hasVideo &&
+              _isVideoInitialized &&
+              _totalDuration > Duration.zero)
             Positioned(
               left: 0,
               right: 0,
@@ -726,18 +828,25 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
                     final width = constraints.maxWidth;
-                    final effectivePos = _isScrubbing ? _scrubPosition : _currentPosition;
+                    final effectivePos = _isScrubbing
+                        ? _scrubPosition
+                        : _currentPosition;
                     final ratio = _totalDuration.inMilliseconds > 0
-                        ? (effectivePos.inMilliseconds / _totalDuration.inMilliseconds).clamp(0.0, 1.0)
+                        ? (effectivePos.inMilliseconds /
+                                  _totalDuration.inMilliseconds)
+                              .clamp(0.0, 1.0)
                         : 0.0;
 
                     return GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onHorizontalDragStart: (d) => _startScrubbing(d.localPosition.dx, width),
-                      onHorizontalDragUpdate: (d) => _updateScrubbing(d.localPosition.dx, width),
+                      onHorizontalDragStart: (d) =>
+                          _startScrubbing(d.localPosition.dx, width),
+                      onHorizontalDragUpdate: (d) =>
+                          _updateScrubbing(d.localPosition.dx, width),
                       onHorizontalDragEnd: (_) => _endScrubbing(),
                       onHorizontalDragCancel: () => _endScrubbing(),
-                      onTapDown: (d) => _startScrubbing(d.localPosition.dx, width),
+                      onTapDown: (d) =>
+                          _startScrubbing(d.localPosition.dx, width),
                       onTapUp: (_) => _endScrubbing(),
                       onTapCancel: () => _endScrubbing(),
                       child: Container(
@@ -763,7 +872,9 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                                 boxShadow: _isScrubbing
                                     ? [
                                         BoxShadow(
-                                          color: AppColors.gold.withValues(alpha: 0.6),
+                                          color: AppColors.gold.withValues(
+                                            alpha: 0.6,
+                                          ),
                                           blurRadius: 6,
                                           spreadRadius: 1,
                                         ),
@@ -774,17 +885,25 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
                             // Thumb handle when scrubbing
                             if (_isScrubbing)
                               Positioned(
-                                left: (width * ratio - 6).clamp(0.0, width - 12),
+                                left: (width * ratio - 6).clamp(
+                                  0.0,
+                                  width - 12,
+                                ),
                                 child: Container(
                                   width: 12,
                                   height: 12,
                                   decoration: BoxDecoration(
                                     color: Colors.white,
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: AppColors.gold, width: 2.5),
+                                    border: Border.all(
+                                      color: AppColors.gold,
+                                      width: 2.5,
+                                    ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.6),
+                                        color: Colors.black.withValues(
+                                          alpha: 0.6,
+                                        ),
                                         blurRadius: 4,
                                         spreadRadius: 1,
                                       ),
@@ -815,20 +934,6 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
       );
     }
 
-    final safeCover = YouTubeHelper.safeThumbnailUrl(
-      widget.banner.imageUrl,
-      fallbackVideoUrl: widget.banner.videoUrl,
-    );
-
-    if (safeCover.isNotEmpty) {
-      return CachedNetworkImage(
-        imageUrl: safeCover,
-        fit: BoxFit.contain,
-        placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
-        errorWidget: (_, __, ___) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
-      );
-    }
-
     return const Center(
       child: CircularProgressIndicator(color: AppColors.gold),
     );
@@ -847,9 +952,14 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
     return CachedNetworkImage(
       imageUrl: widget.banner.imageUrl,
       fit: BoxFit.contain,
-      placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
+      placeholder: (_, __) =>
+          const Center(child: CircularProgressIndicator(color: AppColors.gold)),
       errorWidget: (_, __, ___) => const Center(
-        child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 54),
+        child: Icon(
+          Icons.broken_image_rounded,
+          color: Colors.white54,
+          size: 54,
+        ),
       ),
     );
   }
