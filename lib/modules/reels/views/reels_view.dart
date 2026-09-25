@@ -11,6 +11,7 @@ import 'package:video_player/video_player.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/youtube_helper.dart';
 import '../../../data/models/banner_model.dart';
 import '../../main_nav/controllers/main_nav_controller.dart';
 import '../controllers/reels_controller.dart';
@@ -325,7 +326,17 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
     final rawUrl = widget.banner.videoUrl?.trim();
     if (rawUrl == null || rawUrl.isEmpty) return;
     try {
-      final uri = Uri.tryParse(rawUrl);
+      String playUrl = rawUrl;
+      if (YouTubeHelper.isYouTubeUrl(rawUrl)) {
+        final streamUrl = await YouTubeHelper.resolveStreamUrl(rawUrl);
+        if (streamUrl != null && streamUrl.isNotEmpty) {
+          playUrl = streamUrl;
+        } else {
+          AppLogger.w('Could not resolve stream URL for YouTube video: $rawUrl');
+        }
+      }
+
+      final uri = Uri.tryParse(playUrl);
       if (uri == null) return;
 
       final ctrl = VideoPlayerController.networkUrl(uri);
@@ -804,9 +815,14 @@ class _ReelItemCardState extends State<_ReelItemCard> with TickerProviderStateMi
       );
     }
 
-    if (widget.banner.imageUrl.isNotEmpty) {
+    final safeCover = YouTubeHelper.safeThumbnailUrl(
+      widget.banner.imageUrl,
+      fallbackVideoUrl: widget.banner.videoUrl,
+    );
+
+    if (safeCover.isNotEmpty) {
       return CachedNetworkImage(
-        imageUrl: widget.banner.imageUrl,
+        imageUrl: safeCover,
         fit: BoxFit.contain,
         placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
         errorWidget: (_, __, ___) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),

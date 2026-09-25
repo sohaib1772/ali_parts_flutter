@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/widgets/app_header_widget.dart';
@@ -131,6 +132,10 @@ class _NotificationsViewState extends State<NotificationsView> {
     final type = item['type'] as String?;
     final productId = item['product_id'] as String?;
     final bannerId = (item['banner_id'] as String?) ?? (item['status'] as String?);
+    final imageUrl = item['image_url'] as String?;
+    final createdAt = item['created_at'] as String?;
+    final title = item['title'] as String?;
+    final body = item['body'] as String?;
 
     if (notifId != null && item['read_at'] == null) {
       _notifService.markRead(notifId);
@@ -142,6 +147,10 @@ class _NotificationsViewState extends State<NotificationsView> {
       productId: productId,
       bannerId: bannerId,
       status: item['status'] as String?,
+      imageUrl: imageUrl,
+      createdAt: createdAt,
+      title: title,
+      body: body,
     );
   }
 
@@ -335,26 +344,48 @@ class _NotificationsViewState extends State<NotificationsView> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // Icon container
-                              Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  gradient: isUnread
-                                      ? const LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: [Color(0xFFFBBF24), Color(0xFFD97706)],
-                                        )
-                                      : null,
-                                  color: isUnread ? null : const Color(0xFFF1F5F9),
-                                  borderRadius: BorderRadius.circular(12),
+                              if (item['image_url'] != null && item['image_url'].toString().isNotEmpty)
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: CachedNetworkImage(
+                                    imageUrl: item['image_url'],
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                    placeholder: (context, url) => Container(
+                                      width: 48,
+                                      height: 48,
+                                      color: Colors.grey[200],
+                                    ),
+                                    errorWidget: (context, url, error) => Container(
+                                      width: 48,
+                                      height: 48,
+                                      color: Colors.grey[200],
+                                      child: const Icon(Icons.broken_image, size: 20, color: Colors.grey),
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    gradient: isUnread
+                                        ? const LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [Color(0xFFFBBF24), Color(0xFFD97706)],
+                                          )
+                                        : null,
+                                    color: isUnread ? null : const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    iconData,
+                                    color: isUnread ? const Color(0xFF0A192F) : const Color(0xFF64748B),
+                                    size: 20,
+                                  ),
                                 ),
-                                child: Icon(
-                                  iconData,
-                                  color: isUnread ? const Color(0xFF0A192F) : const Color(0xFF64748B),
-                                  size: 20,
-                                ),
-                              ),
                               const SizedBox(width: 12),
 
                               // Text content

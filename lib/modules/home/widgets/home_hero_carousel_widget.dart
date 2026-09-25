@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/youtube_helper.dart';
 import '../../../data/models/banner_model.dart';
 
 class HomeHeroCarouselWidget extends StatefulWidget {
@@ -99,7 +100,30 @@ class _HomeHeroCarouselWidgetState extends State<HomeHeroCarouselWidget> {
                       // Banner Image or Video Card
                       if (banner.imageUrl.isNotEmpty)
                         CachedNetworkImage(
-                          imageUrl: Formatters.thumbUrl(banner.imageUrl, width: 900),
+                          imageUrl: YouTubeHelper.isYouTubeUrl(banner.imageUrl)
+                              ? YouTubeHelper.safeThumbnailUrl(banner.imageUrl)
+                              : Formatters.thumbUrl(banner.imageUrl, width: 900),
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => Container(
+                            color: const Color(0xFF0F1E36),
+                            child: const Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (_, __, ___) => Container(
+                            color: const Color(0xFF0F1E36),
+                            child: const Icon(Icons.broken_image_rounded, color: AppColors.gold, size: 36),
+                          ),
+                        )
+                      else if (hasVideo && YouTubeHelper.isYouTubeUrl(banner.videoUrl) && YouTubeHelper.extractVideoId(banner.videoUrl) != null)
+                        CachedNetworkImage(
+                          imageUrl: YouTubeHelper.getThumbnailUrl(
+                            YouTubeHelper.extractVideoId(banner.videoUrl)!,
+                          ),
                           fit: BoxFit.cover,
                           placeholder: (_, __) => Container(
                             color: const Color(0xFF0F1E36),

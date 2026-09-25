@@ -22,4 +22,6 @@ abstract class AppRoutes {
   static const admin = '/admin';
   static const forceUpdate = '/force-update';
   static const reels = '/reels';
+  static const broadcastDetail = '/broadcast-detail';
+  static const archivedOrders = '/admin-archived-orders';
 }

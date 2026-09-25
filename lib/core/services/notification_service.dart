@@ -681,6 +681,10 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
     String? productId,
     String? bannerId,
     String? status,
+    String? imageUrl,
+    String? createdAt,
+    String? title,
+    String? body,
   }) async {
     final effectiveBannerId = (bannerId != null && bannerId.isNotEmpty)
         ? bannerId
@@ -717,6 +721,16 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         } else {
           Get.toNamed(AppRoutes.orders);
         }
+        break;
+
+      case 'admin_new_replacement':
+        if (Get.isRegistered<MainNavController>()) {
+          Get.find<MainNavController>().changeTab(3); // Assuming admin tab or just go to notifications
+          Get.until((route) => Get.currentRoute == AppRoutes.mainNav);
+        } else {
+          Get.offAllNamed(AppRoutes.mainNav);
+        }
+        Get.toNamed(AppRoutes.notifications);
         break;
 
       case 'promo':
@@ -768,7 +782,12 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         break;
 
       case 'admin_broadcast':
-        Get.toNamed(AppRoutes.notifications);
+        Get.toNamed(AppRoutes.broadcastDetail, arguments: {
+          'title': title ?? '',
+          'body': body ?? '',
+          'image_url': imageUrl ?? '',
+          'created_at': createdAt ?? '',
+        });
         break;
 
       default:
@@ -829,7 +848,7 @@ class NotificationService extends GetxService with WidgetsBindingObserver {
         queryParameters: {
           'user_id': 'eq.$_currentUserId',
           'select':
-              'id,order_id,title,body,status,type,read_at,created_at',
+              'id,order_id,product_id,title,body,status,type,image_url,read_at,created_at',
           'order': 'created_at.desc',
           'limit': limit,
         },

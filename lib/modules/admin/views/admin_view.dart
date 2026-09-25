@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
+import '../../../core/utils/arabic_search_helper.dart';
+import '../../../core/utils/youtube_helper.dart';
 import '../../../core/widgets/app_header_widget.dart';
 import '../../../core/widgets/glass_scroll_to_top_button.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -14,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../app/config/api_constants.dart';
+import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/services/auth_service.dart';
@@ -44,11 +48,18 @@ class _AdminViewState extends State<AdminView> {
   // Products state
   List<ProductModel> _products = [];
   bool _isLoadingProducts = true;
+  bool _isLoadingMoreProducts = false;
+  bool _hasMoreProducts = true;
+  int _productsPage = 0;
+  static const int _productsPageSize = 40;
   final TextEditingController _searchCtrl = TextEditingController();
+  Timer? _searchDebounceTimer;
+  String _currentProductSearchQuery = '';
   int _totalProducts = 0;
 
   // Orders state
   List<Map<String, dynamic>> _orders = [];
+  int _archivedOrdersCount = 0;
   bool _isLoadingOrders = false;
   String _orderRange = '24h'; // '24h' | '7d' | 'all'
   String _orderStatusFilter = 'all'; // 'all' | 'received' | 'preparing' | 'packed' | 'shipped_group' | 'delivered' | 'cancelled'
@@ -149,6 +160,7 @@ class _AdminViewState extends State<AdminView> {
   int _broadcastRecipientsCount = 0;
   bool _isLoadingBroadcastCount = false;
   bool _isSendingBroadcast = false;
+  Uint8List? _broadcastImage;
 
   // Diagnostics state
   bool _isRunningDiagnostics = false;
@@ -252,10 +264,24 @@ class _AdminViewState extends State<AdminView> {
     }
 
     _loadDataForTab(_selectedTab);
+    _scrollController.addListener(_onAdminScroll);
+  }
+
+  void _onAdminScroll() {
+    if (_selectedTab == 0 &&
+        !_isLoadingProducts &&
+        !_isLoadingMoreProducts &&
+        _hasMoreProducts &&
+        _scrollController.hasClients &&
+        _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 400) {
+      _loadMoreProducts();
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onAdminScroll);
+    _searchDebounceTimer?.cancel();
     _scrollController.dispose();
     _searchCtrl.dispose();
     _stockSearchCtrl.dispose();
@@ -350,19 +376,41 @@ class _AdminViewState extends State<AdminView> {
     } catch (_) {}
   }
 
-  Future<void> _loadProducts({String query = ''}) async {
-    setState(() => _isLoadingProducts = true);
+  Future<void> _loadProducts({String? query, bool isRefresh = true}) async {
+    if (isRefresh) {
+      _productsPage = 0;
+      _hasMoreProducts = true;
+      if (query != null) {
+        _currentProductSearchQuery = query.trim();
+      }
+      setState(() => _isLoadingProducts = true);
+    } else {
+      if (_isLoadingMoreProducts || !_hasMoreProducts) return;
+      setState(() => _isLoadingMoreProducts = true);
+    }
+
     try {
       final dio = Get.find<DioClient>().dio;
+      final offset = _productsPage * _productsPageSize;
       final qParams = <String, dynamic>{
         'select': '*',
         'order': 'created_at.desc',
-        'limit': 50,
+        'limit': _productsPageSize,
+        'offset': offset,
       };
 
-      if (query.trim().isNotEmpty) {
-        final pattern = '%${query.trim()}%';
-        qParams['or'] = '(name_ar.ilike.$pattern,oem_number.ilike.$pattern,name_en.ilike.$pattern)';
+      final activeQuery = _currentProductSearchQuery;
+      if (activeQuery.isNotEmpty) {
+        final orClause = ArabicSearchHelper.buildPostgrestOrClause(activeQuery);
+        if (orClause.isNotEmpty) {
+          final cleanOr = orClause.startsWith('(') && orClause.endsWith(')')
+              ? orClause.substring(1, orClause.length - 1)
+              : orClause;
+          qParams['or'] = '($cleanOr)';
+        } else {
+          final pattern = '%$activeQuery%';
+          qParams['or'] = '(name_ar.ilike.$pattern,oem_number.ilike.$pattern,name_en.ilike.$pattern,dialect_names.ilike.$pattern)';
+        }
       }
 
       final res = await dio.get(
@@ -384,16 +432,41 @@ class _AdminViewState extends State<AdminView> {
 
         if (mounted) {
           setState(() {
-            _products = prods;
+            if (isRefresh) {
+              _products = prods;
+            } else {
+              _products.addAll(prods);
+            }
             _totalProducts = count;
+            _hasMoreProducts = prods.length >= _productsPageSize;
+            if (prods.isNotEmpty) {
+              _productsPage++;
+            }
             _isLoadingProducts = false;
+            _isLoadingMoreProducts = false;
           });
         }
         return;
       }
     } catch (_) {}
 
-    if (mounted) setState(() => _isLoadingProducts = false);
+    if (mounted) {
+      setState(() {
+        _isLoadingProducts = false;
+        _isLoadingMoreProducts = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreProducts() async {
+    await _loadProducts(isRefresh: false);
+  }
+
+  void _onProductSearchChanged(String val) {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 350), () {
+      _loadProducts(query: val, isRefresh: true);
+    });
   }
 
   Future<void> _loadOrders() async {
@@ -404,6 +477,7 @@ class _AdminViewState extends State<AdminView> {
         ApiConstants.orders,
         queryParameters: {
           'select': '*,order_items(*)',
+          'is_archived': 'eq.false',
           'order': 'created_at.desc',
           'limit': 100,
         },
@@ -470,9 +544,26 @@ class _AdminViewState extends State<AdminView> {
           } catch (_) {}
         }
 
+        // Fetch archived orders count
+        int archCount = 0;
+        try {
+          final archRes = await dio.get(
+            ApiConstants.orders,
+            queryParameters: {
+              'select': 'id',
+              'is_archived': 'eq.true',
+              'limit': 500,
+            },
+          );
+          if (archRes.data is List) {
+            archCount = (archRes.data as List).length;
+          }
+        } catch (_) {}
+
         if (mounted) {
           setState(() {
             _orders = list;
+            _archivedOrdersCount = archCount;
             _isLoadingOrders = false;
           });
         }
@@ -480,7 +571,30 @@ class _AdminViewState extends State<AdminView> {
       }
     } catch (_) {}
 
-    if (mounted) setState(() => _isLoadingOrders = false);
+    // Fallback archived count fetch
+    int fallbackArchCount = 0;
+    try {
+      final dio = Get.find<DioClient>().dio;
+      final archRes = await dio.get(
+        ApiConstants.orders,
+        queryParameters: {
+          'select': 'id',
+          'is_archived': 'eq.true',
+          'limit': 500,
+        },
+      );
+      if (archRes.data is List) {
+        fallbackArchCount = (archRes.data as List).length;
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _orders = [];
+        _archivedOrdersCount = fallbackArchCount;
+        _isLoadingOrders = false;
+      });
+    }
   }
 
   Future<void> _loadStockMovements() async {
@@ -881,12 +995,25 @@ class _AdminViewState extends State<AdminView> {
     setState(() => _isSendingBroadcast = true);
     try {
       final dio = Get.find<DioClient>().dio;
+      String? finalImageUrl;
+
+      if (_broadcastImage != null) {
+        final filename = 'broadcast_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        await dio.post(
+          '/storage/v1/object/product-images/broadcast/$filename',
+          data: Stream.fromIterable([_broadcastImage!]),
+          options: Options(headers: {'Content-Type': 'image/jpeg'}),
+        );
+        finalImageUrl = '${ApiConstants.baseUrl}/storage/v1/object/public/product-images/broadcast/$filename';
+      }
+
       final res = await dio.post(
         ApiConstants.rpcAdminBroadcastNotification,
         data: {
           'p_title': title,
           'p_body': body,
           'p_audience': _broadcastAudience,
+          if (finalImageUrl != null) 'p_image_url': finalImageUrl,
         },
       );
 
@@ -901,6 +1028,7 @@ class _AdminViewState extends State<AdminView> {
 
       _broadcastTitleCtrl.clear();
       _broadcastBodyCtrl.clear();
+      _broadcastImage = null;
       _loadBroadcastCount();
     } catch (e) {
       Get.snackbar('خطأ', 'تعذر إرسال الإشعار الجماعي', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
@@ -3578,6 +3706,65 @@ class _AdminViewState extends State<AdminView> {
           ),
           const SizedBox(height: 14),
 
+          // Image input
+          const Text(
+            'صورة الإشعار (اختياري)',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF334155), fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 6),
+          if (_broadcastImage != null)
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.memory(_broadcastImage!, height: 150, width: double.infinity, fit: BoxFit.cover),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: GestureDetector(
+                    onTap: () => setState(() => _broadcastImage = null),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.black54),
+                      child: const Icon(Icons.close, color: Colors.white, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            GestureDetector(
+              onTap: () async {
+                final picker = ImagePicker();
+                final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                if (pickedFile != null) {
+                  final bytes = await pickedFile.readAsBytes();
+                  setState(() => _broadcastImage = bytes);
+                }
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFCBD5E1)),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.add_photo_alternate_outlined, size: 32, color: Color(0xFF94A3B8)),
+                    SizedBox(height: 8),
+                    Text(
+                      'اضغط لاختيار صورة',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 14),
+
           // Recipients Summary Card
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -3733,9 +3920,13 @@ class _AdminViewState extends State<AdminView> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: TextField(
             controller: _searchCtrl,
-            onSubmitted: (q) => _loadProducts(query: q),
+            onChanged: _onProductSearchChanged,
+            onSubmitted: (q) {
+              _searchDebounceTimer?.cancel();
+              _loadProducts(query: q, isRefresh: true);
+            },
             decoration: InputDecoration(
-              hintText: 'OEM... ابحث بالاسم أو رقم',
+              hintText: 'ابحث بالاسم، OEM، جاملغ، مشط...',
               hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
               prefixIcon: const Icon(IconsaxPlusLinear.search_normal_1, color: Color(0xFF94A3B8), size: 18),
               suffixIcon: _searchCtrl.text.isNotEmpty
@@ -3743,7 +3934,8 @@ class _AdminViewState extends State<AdminView> {
                       icon: const Icon(IconsaxPlusBold.close_circle, size: 18),
                       onPressed: () {
                         _searchCtrl.clear();
-                        _loadProducts();
+                        _searchDebounceTimer?.cancel();
+                        _loadProducts(query: '', isRefresh: true);
                       },
                     )
                   : null,
@@ -3880,6 +4072,52 @@ class _AdminViewState extends State<AdminView> {
               );
             },
           ),
+        if (_isLoadingMoreProducts)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'جاري تحميل المزيد من المنتجات...',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else if (_hasMoreProducts && _products.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: OutlinedButton.icon(
+              onPressed: _loadMoreProducts,
+              icon: const Icon(Icons.arrow_downward_rounded, size: 16),
+              label: const Text('تحميل المزيد من المنتجات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF0A192F),
+                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          )
+        else if (!_hasMoreProducts && _products.length >= _productsPageSize)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: Text(
+                'تم عرض جميع المنتجات ✓',
+                style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -3889,13 +4127,6 @@ class _AdminViewState extends State<AdminView> {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 40),
         child: Center(child: CircularProgressIndicator(color: AppColors.gold)),
-      );
-    }
-
-    if (_orders.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 40),
-        child: Center(child: Text('لا توجد طلبات بعد', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold))),
       );
     }
 
@@ -3959,6 +4190,75 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // View Mode Switcher (الطلبات النشطة vs الطلبات المأرشفة) - تماماً مثل الموقع
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.receipt_long_outlined, size: 16, color: Colors.white),
+                        const SizedBox(width: 6),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            'الطلبات النشطة (${_orders.length})',
+                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => Get.toNamed(AppRoutes.archivedOrders)?.then((_) => _loadOrders()),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(IconsaxPlusLinear.archive_1, size: 16, color: Color(0xFFD97706)),
+                          const SizedBox(width: 6),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'الطلبات المأرشفة ($_archivedOrdersCount)',
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           // 1. Stats Banner
           Container(
             padding: const EdgeInsets.all(16),
@@ -4092,36 +4392,129 @@ class _AdminViewState extends State<AdminView> {
 
           const SizedBox(height: 12),
 
-          // 2. Subheader Action Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${filtered.length} طلب معروض',
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
-              ),
-              if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value)
-                OutlinedButton.icon(
-                  onPressed: _showDeleteAllOrdersDialog,
-                  icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFDC2626)),
-                  label: const Text(
-                    'حذف جميع الطلبات',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Color(0xFFFECDD3)),
-                    backgroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          // 2. Subheader Action Row (when active orders exist)
+          if (_orders.isNotEmpty) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'الطلبات (${filtered.length})',
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                ),
+                Text(
+                  '${filtered.length} طلب نشط',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => Get.toNamed(AppRoutes.archivedOrders)?.then((_) => _loadOrders()),
+                    icon: const Icon(IconsaxPlusLinear.archive_1, size: 16, color: Color(0xFFD97706)),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'الطلبات المأرشفة ($_archivedOrdersCount) 📦',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFFDE68A)),
+                      backgroundColor: const Color(0xFFFFFBEB),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                    ),
                   ),
                 ),
-            ],
-          ),
+                if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _showArchiveAllOrdersDialog,
+                      icon: const Icon(Icons.archive_outlined, size: 16, color: Color(0xFFDC2626)),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'أرشفة جميع الطلبات',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFFECDD3)),
+                        backgroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
 
-          const SizedBox(height: 12),
-
-          // 3. Orders List
-          if (filtered.isEmpty)
+          // 3. Orders List or Informative Empty State
+          if (_orders.isEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: const Icon(IconsaxPlusBold.archive_1, size: 28, color: Color(0xFFD97706)),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'لا توجد طلبات نشطة حالياً',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _archivedOrdersCount > 0
+                        ? 'تمت أرشفة جميع الطلبات السابقة ($_archivedOrdersCount طلب في الأرشيف)'
+                        : 'لم يتم استلام أي طلبات جديدة حتى الآن',
+                    style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (_archivedOrdersCount > 0) ...[
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => Get.toNamed(AppRoutes.archivedOrders)?.then((_) => _loadOrders()),
+                        icon: const Icon(IconsaxPlusBold.archive_1, size: 18, color: Color(0xFF0F172A)),
+                        label: Text(
+                          'عرض الطلبات المأرشفة ($_archivedOrdersCount) 📦',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFBBF24),
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            )
+          else if (filtered.isEmpty)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 40),
               alignment: Alignment.center,
@@ -5010,30 +5403,96 @@ class _AdminViewState extends State<AdminView> {
     );
   }
 
-  void _showDeleteAllOrdersDialog() {
+  void _showArchiveAllOrdersDialog() {
     if (_orders.isEmpty) return;
+    final secretCtrl = TextEditingController();
     Get.dialog(
       AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('حذف جميع الطلبات', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
-        content: Text('سيتم حذف ${_orders.length} طلب بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.'),
+        title: const Row(
+          children: [
+            Icon(IconsaxPlusBold.archive, color: Color(0xFFD97706), size: 22),
+            SizedBox(width: 8),
+            Text(
+              'أرشفة جميع الطلبات',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF0F172A)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'سيتم نقل ${_orders.length} طلب إلى سكرين الطلبات المأرشفة ولن تظهر في قائمة الطلبات النشطة.',
+              style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'ملاحظة: يمكنك مراجعة واستعادة أي طلب مأرشف في أي وقت من شاشة "الطلبات المأرشفة".',
+              style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: secretCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                hintText: 'أدخل الرمز السري للأرشفة (env)...',
+                hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                prefixIcon: const Icon(IconsaxPlusLinear.key, size: 18, color: Color(0xFFD97706)),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Get.back(),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
             onPressed: () async {
+              final secret = secretCtrl.text.trim();
+              if (secret.isEmpty) {
+                Get.snackbar('تنبيه', 'يرجى إدخال الرمز السري للأرشفة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                return;
+              }
               Get.back();
               try {
                 final dio = Get.find<DioClient>().dio;
-                final ids = _orders.map((o) => o['id'] as String).toList();
-                await dio.delete('/rest/v1/orders', queryParameters: {'id': 'in.(${ids.join(",")})'});
-                Get.snackbar('تم الحذف', 'تم حذف جميع الطلبات بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
-                _loadOrders();
+                final res = await dio.post(
+                  ApiConstants.apiAdminArchiveAllOrders,
+                  data: {'secret': secret},
+                );
+                if (res.statusCode == 200 && res.data is Map && res.data['ok'] == true) {
+                  Get.snackbar(
+                    'تمت الأرشفة',
+                    res.data['message'] ?? 'تمت أرشفة جميع الطلبات بنجاح ✓',
+                    backgroundColor: AppColors.inStock,
+                    colorText: Colors.white,
+                    duration: const Duration(seconds: 4),
+                  );
+                  _loadOrders();
+                } else {
+                  final err = (res.data is Map ? res.data['error'] : null) ?? 'الرمز السري غير صحيح';
+                  Get.snackbar('فشل الأرشفة', err, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                }
+              } on DioException catch (de) {
+                final msg = de.response?.data is Map ? de.response?.data['error'] : 'الرمز السري غير صحيح أو حدث خطأ';
+                Get.snackbar('فشل الأرشفة', msg ?? 'الرمز السري غير صحيح', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
               } catch (_) {
-                Get.snackbar('خطأ', 'تعذر حذف الطلبات', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                Get.snackbar('خطأ', 'تعذر الاتصال بالسيرفر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-            child: const Text('حذف نهائي'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD97706),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('تأكيد الأرشفة', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -5854,6 +6313,86 @@ class _AdminViewState extends State<AdminView> {
     if (mounted) setState(() => _isLoadingBanners = false);
   }
 
+  void _showYouTubeInputDialog(BuildContext context, Function(String url) onSubmitted) {
+    final ctrl = TextEditingController();
+    Get.dialog(
+      Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: () => Get.back(),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const Text(
+                    'إضافة فيديو من يوتيوب',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                  ),
+                  const SizedBox(width: 20),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'يدعم روابط الفيديوهات العادية وفيديوهات Shorts:',
+                style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(
+                  hintText: 'https://youtube.com/shorts/... أو https://youtu.be/...',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  prefixIcon: const Icon(Icons.smart_display_rounded, color: Color(0xFFEF4444), size: 22),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  final input = ctrl.text.trim();
+                  if (input.isEmpty) {
+                    Get.snackbar('تنبيه', 'يرجى إدخال الرابط', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                    return;
+                  }
+                  if (!YouTubeHelper.isYouTubeUrl(input) || YouTubeHelper.extractVideoId(input) == null) {
+                    Get.snackbar('رابط غير صالح', 'يرجى إدخال رابط يوتيوب صحيح (فيديو أو Shorts)', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                    return;
+                  }
+                  Get.back();
+                  onSubmitted(input);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('إضافة الفيديو', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showAddEditBannerDialog({Map<String, dynamic>? banner}) {
     final isEdit = banner != null;
     final titleCtrl = TextEditingController(text: banner?['title_ar'] ?? '');
@@ -5861,6 +6400,7 @@ class _AdminViewState extends State<AdminView> {
 
     String currentImageUrl = banner?['image_url'] as String? ?? '';
     String currentVideoUrl = (banner?['video_url'] as String?) ?? '';
+    final youtubeUrlCtrl = TextEditingController(text: YouTubeHelper.isYouTubeUrl(currentVideoUrl) ? currentVideoUrl : '');
 
     XFile? pickedImageFile;
     Uint8List? pickedImageBytes;
@@ -5880,7 +6420,8 @@ class _AdminViewState extends State<AdminView> {
           child: StatefulBuilder(
             builder: (ctx, setDlgState) {
               final hasImage = pickedImageBytes != null || currentImageUrl.isNotEmpty;
-              final hasVideo = pickedVideoFile != null || currentVideoUrl.isNotEmpty;
+              final hasVideo = pickedVideoFile != null || currentVideoUrl.isNotEmpty || youtubeUrlCtrl.text.trim().isNotEmpty;
+              final isYtVideo = YouTubeHelper.isYouTubeUrl(currentVideoUrl) || YouTubeHelper.isYouTubeUrl(youtubeUrlCtrl.text.trim());
 
               return SingleChildScrollView(
                 child: Column(
@@ -5943,7 +6484,7 @@ class _AdminViewState extends State<AdminView> {
                               child: pickedImageBytes != null
                                   ? Image.memory(pickedImageBytes!, fit: BoxFit.cover)
                                   : CachedNetworkImage(
-                                      imageUrl: currentImageUrl,
+                                      imageUrl: YouTubeHelper.safeThumbnailUrl(currentImageUrl, fallbackVideoUrl: currentVideoUrl),
                                       fit: BoxFit.cover,
                                       placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
                                       errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey)),
@@ -6013,7 +6554,7 @@ class _AdminViewState extends State<AdminView> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'فيديو (اختياري)',
+                          'فيديو العرض (اختياري)',
                           style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
                         ),
                         if (hasVideo)
@@ -6024,6 +6565,7 @@ class _AdminViewState extends State<AdminView> {
                                 pickedVideoBytes = null;
                                 pickedVideoName = null;
                                 currentVideoUrl = '';
+                                youtubeUrlCtrl.clear();
                               });
                             },
                             child: const Text('إزالة الفيديو', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
@@ -6035,20 +6577,37 @@ class _AdminViewState extends State<AdminView> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
+                          color: isYtVideo ? const Color(0xFFFEF2F2) : const Color(0xFFF1F5F9),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                          border: Border.all(color: isYtVideo ? const Color(0xFFFECACA) : const Color(0xFFCBD5E1)),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.videocam_rounded, color: AppColors.gold, size: 24),
+                            Icon(
+                              isYtVideo ? Icons.smart_display_rounded : Icons.videocam_rounded,
+                              color: isYtVideo ? const Color(0xFFDC2626) : AppColors.gold,
+                              size: 24,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                pickedVideoName ?? (currentVideoUrl.isNotEmpty ? 'فيديو مرفوع' : 'فيديو محدد'),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    isYtVideo ? 'فيديو من يوتيوب' : (pickedVideoName ?? (currentVideoUrl.isNotEmpty ? 'فيديو مرفوع' : 'فيديو محدد')),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                  ),
+                                  if (isYtVideo)
+                                    Text(
+                                      currentVideoUrl.isNotEmpty ? currentVideoUrl : youtubeUrlCtrl.text.trim(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textDirection: TextDirection.ltr,
+                                      style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+                                    ),
+                                ],
                               ),
                             ),
                             IconButton(
@@ -6058,6 +6617,7 @@ class _AdminViewState extends State<AdminView> {
                                   pickedVideoBytes = null;
                                   pickedVideoName = null;
                                   currentVideoUrl = '';
+                                  youtubeUrlCtrl.clear();
                                 });
                               },
                               icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626), size: 18),
@@ -6068,45 +6628,93 @@ class _AdminViewState extends State<AdminView> {
                         ),
                       )
                     else
-                      InkWell(
-                        onTap: () async {
-                          final picker = ImagePicker();
-                          final vid = await picker.pickVideo(source: ImageSource.gallery);
-                          if (vid != null) {
-                            final bytes = await vid.readAsBytes();
-                            if (bytes.lengthInBytes > 35 * 1024 * 1024) {
-                              Get.snackbar('حجم الفيديو كبير', 'يرجى اختيار فيديو بحجم أقل من 35 ميغابايت', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
-                              return;
-                            }
-                            setDlgState(() {
-                              pickedVideoFile = vid;
-                              pickedVideoBytes = bytes;
-                              pickedVideoName = vid.name;
-                            });
-                          }
-                        },
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          height: 80,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                      Row(
+                        children: [
+                          // 1. Gallery upload (existing method)
+                          Expanded(
+                            child: InkWell(
+                              onTap: () async {
+                                final picker = ImagePicker();
+                                final vid = await picker.pickVideo(source: ImageSource.gallery);
+                                if (vid != null) {
+                                  final bytes = await vid.readAsBytes();
+                                  if (bytes.lengthInBytes > 35 * 1024 * 1024) {
+                                    Get.snackbar('حجم الفيديو كبير', 'يرجى اختيار فيديو بحجم أقل من 35 ميغابايت', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                                    return;
+                                  }
+                                  setDlgState(() {
+                                    pickedVideoFile = vid;
+                                    pickedVideoBytes = bytes;
+                                    pickedVideoName = vid.name;
+                                    currentVideoUrl = '';
+                                    youtubeUrlCtrl.clear();
+                                  });
+                                }
+                              },
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF8FAFC),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: const Color(0xFFCBD5E1)),
+                                ),
+                                alignment: Alignment.center,
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.upload_rounded, size: 24, color: Color(0xFF64748B)),
+                                    SizedBox(height: 4),
+                                    Text('رفع من المعرض', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF64748B))),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
-                          alignment: Alignment.center,
-                          child: const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.upload_rounded, size: 24, color: Color(0xFF64748B)),
-                              SizedBox(height: 4),
-                              Text('رفع فيديو', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF64748B))),
-                            ],
+                          const SizedBox(width: 10),
+                          // 2. YouTube link
+                          Expanded(
+                            child: InkWell(
+                              onTap: () {
+                                _showYouTubeInputDialog(context, (url) {
+                                  setDlgState(() {
+                                    currentVideoUrl = url;
+                                    youtubeUrlCtrl.text = url;
+                                    pickedVideoFile = null;
+                                    pickedVideoBytes = null;
+                                    pickedVideoName = null;
+                                    final yid = YouTubeHelper.extractVideoId(url);
+                                    if (yid != null) {
+                                      currentImageUrl = YouTubeHelper.getThumbnailUrl(yid);
+                                    }
+                                  });
+                                });
+                              },
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF2F2),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: const Color(0xFFFECACA)),
+                                ),
+                                alignment: Alignment.center,
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.smart_display_rounded, size: 24, color: Color(0xFFDC2626)),
+                                    SizedBox(height: 4),
+                                    Text('رابط يوتيوب', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFFDC2626))),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     const SizedBox(height: 4),
                     const Text(
-                      'يمكنك نشر صورة فقط، أو فيديو فقط، أو كلاهما معاً.',
+                      'يمكنك رفع فيديو MP4 من المعرض أو لصق رابط فيديو من يوتيوب (Shorts/عادي).',
                       style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
                     ),
 
@@ -6149,10 +6757,18 @@ class _AdminViewState extends State<AdminView> {
                                     if (upImg != null) currentImageUrl = upImg;
                                   }
 
-                                  // 2. Upload video if newly picked
+                                  // 2. Upload video if newly picked, or save YouTube link
                                   if (pickedVideoFile != null && pickedVideoBytes != null) {
                                     final upVid = await _uploadSingleVideo(pickedVideoFile, pickedVideoBytes);
                                     if (upVid != null) currentVideoUrl = upVid;
+                                  } else if (youtubeUrlCtrl.text.trim().isNotEmpty) {
+                                    currentVideoUrl = youtubeUrlCtrl.text.trim();
+                                    if ((currentImageUrl.isEmpty || currentImageUrl.contains('maxresdefault.jpg')) && pickedImageBytes == null) {
+                                      final yid = YouTubeHelper.extractVideoId(currentVideoUrl);
+                                      if (yid != null) {
+                                        currentImageUrl = YouTubeHelper.getThumbnailUrl(yid);
+                                      }
+                                    }
                                   }
 
                                   final payload = {
@@ -6346,9 +6962,9 @@ class _AdminViewState extends State<AdminView> {
                             width: double.infinity,
                             height: 130,
                             color: const Color(0xFF0A192F),
-                            child: imageUrl.isNotEmpty
+                            child: (imageUrl.isNotEmpty || (hasVideo && YouTubeHelper.isYouTubeUrl(videoUrl)))
                                 ? CachedNetworkImage(
-                                    imageUrl: imageUrl,
+                                    imageUrl: YouTubeHelper.safeThumbnailUrl(imageUrl, fallbackVideoUrl: videoUrl),
                                     width: double.infinity,
                                     height: 130,
                                     fit: BoxFit.cover,
@@ -8540,6 +9156,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   late final TextEditingController _nameArCtrl;
   late final TextEditingController _nameEnCtrl;
   late final TextEditingController _descCtrl;
+  late final TextEditingController _dialectNamesCtrl;
   late final TextEditingController _oemCtrl;
   late final TextEditingController _priceUsdCtrl;
   late final TextEditingController _comparePriceIqdCtrl;
@@ -8571,6 +9188,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _nameArCtrl = TextEditingController(text: p?.nameAr ?? '');
     _nameEnCtrl = TextEditingController(text: p?.nameEn ?? '');
     _descCtrl = TextEditingController(text: p?.descriptionAr ?? '');
+    _dialectNamesCtrl = TextEditingController(text: p?.dialectNames ?? '');
     _oemCtrl = TextEditingController(text: p?.oemNumber ?? '');
 
     String initPrice = '';
@@ -8633,6 +9251,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _nameArCtrl.dispose();
     _nameEnCtrl.dispose();
     _descCtrl.dispose();
+    _dialectNamesCtrl.dispose();
     _oemCtrl.dispose();
     _priceUsdCtrl.dispose();
     _comparePriceIqdCtrl.dispose();
@@ -8740,6 +9359,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
         'name_ar': _nameArCtrl.text.trim(),
         if (_nameEnCtrl.text.trim().isNotEmpty) 'name_en': _nameEnCtrl.text.trim(),
         if (_descCtrl.text.trim().isNotEmpty) 'description_ar': _descCtrl.text.trim(),
+        'dialect_names': _dialectNamesCtrl.text.trim().isEmpty ? null : _dialectNamesCtrl.text.trim(),
         'oem_number': oemVal,
         'price_usd': usdNum,
         'price_iqd': iqdNum,
@@ -8927,6 +9547,15 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                   _buildFormLabel('الوصف'),
                   const SizedBox(height: 6),
                   _buildInput(_descCtrl, maxLines: 3),
+                  const SizedBox(height: 14),
+                  _buildFormLabel('الأسماء البديلة واللهجات (مخفي عن الزبائن - لتسهيل البحث)'),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'اكتب الأسماء البديلة أو اللهجات مفصولة بفواصل أو مسافات (مثال: جامرلغ، قبق، قبغ، طرمبة)',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 6),
+                  _buildInput(_dialectNamesCtrl, hint: 'مثال: جامرلغ، قبق، قبغ'),
                   const SizedBox(height: 14),
                   _buildFormLabel('رقم القطعة (OEM)'),
                   const SizedBox(height: 6),

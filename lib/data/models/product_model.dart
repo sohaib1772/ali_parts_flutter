@@ -22,6 +22,7 @@ class ProductModel {
   final int salesCount;
   final String condition; // 'new' | 'used'
   final bool hasSideOptions;
+  final String? dialectNames;
   final String? createdAt;
   final Map<String, dynamic>? specs;
 
@@ -30,6 +31,7 @@ class ProductModel {
     required this.nameAr,
     this.nameEn,
     this.descriptionAr,
+    this.dialectNames,
     this.oemNumber,
     required this.priceIqd,
     this.priceUsd = 0,
@@ -96,6 +98,7 @@ class ProductModel {
       salesCount: (json['sales_count'] as num?)?.toInt() ?? 0,
       condition: json['condition'] as String? ?? 'new',
       hasSideOptions: json['has_side_options'] as bool? ?? true,
+      dialectNames: json['dialect_names'] as String?,
       createdAt: json['created_at'] as String?,
       specs: json['specs'] is Map<String, dynamic> ? (json['specs'] as Map<String, dynamic>) : null,
     );
@@ -106,6 +109,7 @@ class ProductModel {
     'name_ar': nameAr,
     'name_en': nameEn,
     'description_ar': descriptionAr,
+    'dialect_names': dialectNames,
     'oem_number': oemNumber,
     'price_iqd': priceIqd,
     'price_usd': priceUsd,

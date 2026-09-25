@@ -39,4 +39,6 @@ class ApiConstants {
   static const String authOtp = '/auth/v1/otp';
   static const String authVerify = '/auth/v1/verify';
   static const String apiCommentNotify = 'https://maktabali.com/api/banner-comments/notify';
+  static const String apiAdminArchiveAllOrders = 'https://maktabali.com/api/admin/archive-all-orders';
+  static const String apiAdminUnarchiveOrder = 'https://maktabali.com/api/admin/unarchive-order';
 }

@@ -22,8 +22,10 @@ import '../../modules/legal/views/privacy_view.dart';
 import '../../modules/legal/views/terms_view.dart';
 import '../../modules/addresses/views/addresses_view.dart';
 import '../../modules/notifications/views/notifications_view.dart';
+import '../../modules/notifications/views/broadcast_detail_view.dart';
 import '../../modules/replacements/views/replacements_view.dart';
 import '../../modules/admin/views/admin_view.dart';
+import '../../modules/admin/views/archived_orders_view.dart';
 import '../../modules/force_update/views/force_update_view.dart';
 import '../../modules/reels/views/reels_view.dart';
 import 'app_routes.dart';
@@ -153,6 +155,16 @@ class AppPages {
       name: AppRoutes.reels,
       page: () => const ReelsView(),
       transition: Transition.fadeIn,
+    ),
+    GetPage(
+      name: AppRoutes.broadcastDetail,
+      page: () => const BroadcastDetailView(),
+      transition: Transition.fade,
+    ),
+    GetPage(
+      name: AppRoutes.archivedOrders,
+      page: () => const ArchivedOrdersView(),
+      transition: Transition.fade,
     ),
     GetPage(
       name: '/auth',
