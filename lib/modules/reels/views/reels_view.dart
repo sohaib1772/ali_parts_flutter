@@ -279,6 +279,8 @@ class _ReelItemCardState extends State<_ReelItemCard>
   bool _isPlaying = false;
   bool _hasStartedPlaying = false;
   bool _userPaused = false;
+  bool _isPlayRequested = false;
+  bool _isYouTubeInitializing = false;
   Worker? _muteWorker;
   Worker? _tabWorker;
   bool _didTriggerEnd = false;
@@ -288,6 +290,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
   Duration _scrubPosition = Duration.zero;
   Duration _currentPosition = Duration.zero;
   Duration _totalDuration = Duration.zero;
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
   bool _wasPlayingBeforeScrub = false;
 
   // Double tap to like heart animation
@@ -395,21 +398,28 @@ class _ReelItemCardState extends State<_ReelItemCard>
   @override
   void didUpdateWidget(covariant _ReelItemCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isYouTube && _webCtrl != null) {
-      if (widget.isActive && !oldWidget.isActive) {
-        if (_hasStartedPlaying && !_userPaused) {
-          _webCtrl!.runJavaScript('playVideo();');
-          setState(() => _isPlaying = true);
-        }
-      } else if (!widget.isActive && oldWidget.isActive) {
-        _webCtrl!.runJavaScript('pauseVideo();');
-        setState(() => _isPlaying = false);
+    if (_isYouTube) {
+      if (_webCtrl == null && !_isYouTubeInitializing) {
+        _initYouTube();
       }
-      if (widget.controller.isMuted.value !=
-          oldWidget.controller.isMuted.value) {
-        _webCtrl!.runJavaScript(
-          widget.controller.isMuted.value ? 'muteVideo();' : 'unMuteVideo();',
-        );
+      if (_webCtrl != null) {
+        if (widget.isActive && !oldWidget.isActive) {
+          if (_hasStartedPlaying && !_userPaused) {
+            _webCtrl!.runJavaScript('playVideo();');
+            setState(() => _isPlaying = true);
+          }
+        } else if (!widget.isActive && oldWidget.isActive) {
+          _isPlayRequested = false;
+          _userPaused = true;
+          _webCtrl!.runJavaScript('pauseVideo();');
+          setState(() => _isPlaying = false);
+        }
+        if (widget.controller.isMuted.value !=
+            oldWidget.controller.isMuted.value) {
+          _webCtrl!.runJavaScript(
+            widget.controller.isMuted.value ? 'muteVideo();' : 'unMuteVideo();',
+          );
+        }
       }
     } else if (_hasVideo && _videoCtrl != null) {
       if (widget.isActive && !oldWidget.isActive) {
@@ -434,7 +444,8 @@ class _ReelItemCardState extends State<_ReelItemCard>
 
   Future<void> _initYouTube() async {
     final videoId = _youTubeId;
-    if (videoId == null) return;
+    if (videoId == null || _isYouTubeInitializing) return;
+    _isYouTubeInitializing = true;
 
     try {
       final ctrl = WebViewController()
@@ -488,8 +499,13 @@ class _ReelItemCardState extends State<_ReelItemCard>
       }
 
       await ctrl.loadHtmlString(html, baseUrl: 'https://ali-parts.com');
+      if (mounted && _isPlayRequested && !_userPaused) {
+        ctrl.runJavaScript('unMuteVideo(); playVideo();');
+      }
     } catch (e) {
       AppLogger.e('Error initializing YouTube webview: $e');
+    } finally {
+      _isYouTubeInitializing = false;
     }
   }
 
@@ -502,6 +518,9 @@ class _ReelItemCardState extends State<_ReelItemCard>
           setState(() {
             _isYouTubeReady = true;
           });
+          if (_isPlayRequested && !_userPaused) {
+            _webCtrl?.runJavaScript('unMuteVideo(); playVideo();');
+          }
         }
       } else if (event == 'playing') {
         _userPaused = false;
@@ -513,7 +532,11 @@ class _ReelItemCardState extends State<_ReelItemCard>
         }
       } else if (event == 'paused') {
         if (mounted && _isPlaying) {
-          setState(() => _isPlaying = false);
+          if (_isPlayRequested && !_userPaused) {
+            _webCtrl?.runJavaScript('playVideo();');
+          } else {
+            setState(() => _isPlaying = false);
+          }
         }
       } else if (event == 'ended') {
         _onYouTubeEnded();
@@ -521,10 +544,9 @@ class _ReelItemCardState extends State<_ReelItemCard>
         if (!_isScrubbing && mounted) {
           final cur = (data['current'] as num?)?.toDouble() ?? 0.0;
           final dur = (data['duration'] as num?)?.toDouble() ?? 0.0;
-          setState(() {
-            _currentPosition = Duration(milliseconds: (cur * 1000).toInt());
-            _totalDuration = Duration(milliseconds: (dur * 1000).toInt());
-          });
+          _totalDuration = Duration(milliseconds: (dur * 1000).toInt());
+          _currentPosition = Duration(milliseconds: (cur * 1000).toInt());
+          _positionNotifier.value = _currentPosition;
         }
       }
     } catch (_) {}
@@ -599,7 +621,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
     var player;
     var isActive = false;
     var isAppMuted = $isMuted;
-    var isUserPaused = true;
+    var isUserPaused = false;
     var pendingPlay = false;
     var progressTimer;
 
@@ -622,9 +644,6 @@ class _ReelItemCardState extends State<_ReelItemCard>
     }
 
     function onPlayerReady(event) {
-      try {
-        event.target.setPlaybackQuality('hd1080');
-      } catch(e) {}
       startProgressTracking();
       if (window.FlutterBridge) {
         FlutterBridge.postMessage(JSON.stringify({event: 'ready'}));
@@ -666,11 +685,12 @@ class _ReelItemCardState extends State<_ReelItemCard>
             }));
           }
         }
-      }, 250);
+      }, 500);
     }
 
     function playVideo() {
       isUserPaused = false;
+      pendingPlay = true;
       isActive = true;
       if (player && typeof player.playVideo === 'function') {
         try {
@@ -685,8 +705,6 @@ class _ReelItemCardState extends State<_ReelItemCard>
           }
         } catch(e) {}
         try { player.playVideo(); } catch(e) {}
-      } else {
-        pendingPlay = true;
       }
     }
 
@@ -771,11 +789,14 @@ class _ReelItemCardState extends State<_ReelItemCard>
     if (!val.isInitialized) return;
 
     if (!_isScrubbing) {
-      setState(() {
-        _currentPosition = val.position;
-        _totalDuration = val.duration;
-        _isPlaying = val.isPlaying;
-      });
+      _currentPosition = val.position;
+      _totalDuration = val.duration;
+      _positionNotifier.value = val.position;
+      if (_isPlaying != val.isPlaying) {
+        setState(() {
+          _isPlaying = val.isPlaying;
+        });
+      }
     }
 
     // Detect video end & auto-advance
@@ -802,6 +823,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
 
   @override
   void dispose() {
+    _positionNotifier.dispose();
     _muteWorker?.dispose();
     _tabWorker?.dispose();
     _heartAnimCtrl.dispose();
@@ -820,15 +842,21 @@ class _ReelItemCardState extends State<_ReelItemCard>
   }
 
   void _handleSingleTap() {
-    if (_isYouTube && _webCtrl != null) {
+    if (_isYouTube) {
       if (_isPlaying) {
         _userPaused = true;
-        _webCtrl!.runJavaScript('pauseVideo();');
+        _isPlayRequested = false;
+        _webCtrl?.runJavaScript('pauseVideo();');
         setState(() => _isPlaying = false);
       } else {
         _userPaused = false;
-        _webCtrl!.runJavaScript('unMuteVideo(); playVideo();');
+        _isPlayRequested = true;
         setState(() => _isPlaying = true);
+        if (_webCtrl != null) {
+          _webCtrl!.runJavaScript('unMuteVideo(); playVideo();');
+        } else if (!_isYouTubeInitializing) {
+          _initYouTube();
+        }
       }
       return;
     }
@@ -887,6 +915,8 @@ class _ReelItemCardState extends State<_ReelItemCard>
         'seekToVideo(${_scrubPosition.inMilliseconds / 1000});',
       );
       if (_wasPlayingBeforeScrub) {
+        _isPlayRequested = true;
+        _userPaused = false;
         _webCtrl!.runJavaScript('playVideo();');
         setState(() => _isPlaying = true);
       }
@@ -1214,92 +1244,97 @@ class _ReelItemCardState extends State<_ReelItemCard>
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
                     final width = constraints.maxWidth;
-                    final effectivePos = _isScrubbing
-                        ? _scrubPosition
-                        : _currentPosition;
-                    final ratio = _totalDuration.inMilliseconds > 0
-                        ? (effectivePos.inMilliseconds /
-                                  _totalDuration.inMilliseconds)
-                              .clamp(0.0, 1.0)
-                        : 0.0;
+                    return ValueListenableBuilder<Duration>(
+                      valueListenable: _positionNotifier,
+                      builder: (ctx, currentPos, _) {
+                        final effectivePos = _isScrubbing
+                            ? _scrubPosition
+                            : currentPos;
+                        final ratio = _totalDuration.inMilliseconds > 0
+                            ? (effectivePos.inMilliseconds /
+                                      _totalDuration.inMilliseconds)
+                                  .clamp(0.0, 1.0)
+                            : 0.0;
 
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragStart: (d) =>
-                          _startScrubbing(d.localPosition.dx, width),
-                      onHorizontalDragUpdate: (d) =>
-                          _updateScrubbing(d.localPosition.dx, width),
-                      onHorizontalDragEnd: (_) => _endScrubbing(),
-                      onHorizontalDragCancel: () => _endScrubbing(),
-                      onTapDown: (d) =>
-                          _startScrubbing(d.localPosition.dx, width),
-                      onTapUp: (_) => _endScrubbing(),
-                      onTapCancel: () => _endScrubbing(),
-                      child: Container(
-                        height: 28, // Generous touch target for easy seeking
-                        color: Colors.transparent,
-                        alignment: Alignment.bottomCenter,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          alignment: Alignment.centerLeft,
-                          children: [
-                            // Track background
-                            Container(
-                              height: _isScrubbing ? 5.5 : 2.5,
-                              width: width,
-                              color: Colors.white.withValues(alpha: 0.25),
-                            ),
-                            // Progress bar (Gold)
-                            Container(
-                              height: _isScrubbing ? 5.5 : 2.5,
-                              width: width * ratio,
-                              decoration: BoxDecoration(
-                                color: AppColors.gold,
-                                boxShadow: _isScrubbing
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.gold.withValues(
-                                            alpha: 0.6,
-                                          ),
-                                          blurRadius: 6,
-                                          spreadRadius: 1,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                            ),
-                            // Thumb handle when scrubbing
-                            if (_isScrubbing)
-                              Positioned(
-                                left: (width * ratio - 6).clamp(
-                                  0.0,
-                                  width - 12,
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragStart: (d) =>
+                              _startScrubbing(d.localPosition.dx, width),
+                          onHorizontalDragUpdate: (d) =>
+                              _updateScrubbing(d.localPosition.dx, width),
+                          onHorizontalDragEnd: (_) => _endScrubbing(),
+                          onHorizontalDragCancel: () => _endScrubbing(),
+                          onTapDown: (d) =>
+                              _startScrubbing(d.localPosition.dx, width),
+                          onTapUp: (_) => _endScrubbing(),
+                          onTapCancel: () => _endScrubbing(),
+                          child: Container(
+                            height: 28, // Generous touch target for easy seeking
+                            color: Colors.transparent,
+                            alignment: Alignment.bottomCenter,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              alignment: Alignment.centerLeft,
+                              children: [
+                                // Track background
+                                Container(
+                                  height: _isScrubbing ? 5.5 : 2.5,
+                                  width: width,
+                                  color: Colors.white.withValues(alpha: 0.25),
                                 ),
-                                child: Container(
-                                  width: 12,
-                                  height: 12,
+                                // Progress bar (Gold)
+                                Container(
+                                  height: _isScrubbing ? 5.5 : 2.5,
+                                  width: width * ratio,
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: AppColors.gold,
-                                      width: 2.5,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.6,
-                                        ),
-                                        blurRadius: 4,
-                                        spreadRadius: 1,
-                                      ),
-                                    ],
+                                    color: AppColors.gold,
+                                    boxShadow: _isScrubbing
+                                        ? [
+                                            BoxShadow(
+                                              color: AppColors.gold.withValues(
+                                                alpha: 0.6,
+                                              ),
+                                              blurRadius: 6,
+                                              spreadRadius: 1,
+                                            ),
+                                          ]
+                                        : null,
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
+                                // Thumb handle when scrubbing
+                                if (_isScrubbing)
+                                  Positioned(
+                                    left: (width * ratio - 6).clamp(
+                                      0.0,
+                                      width - 12,
+                                    ),
+                                    child: Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: AppColors.gold,
+                                          width: 2.5,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(
+                                              alpha: 0.6,
+                                            ),
+                                            blurRadius: 4,
+                                            spreadRadius: 1,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -1335,14 +1370,14 @@ class _ReelItemCardState extends State<_ReelItemCard>
               child: WebViewWidget(controller: _webCtrl!),
             ),
 
-          // Black overlay layer whenever video is not playing - completely hides YouTube thumbnail, title & pause controls!
-          if (!_isPlaying)
+          // Black overlay layer ONLY at the beginning before video starts playing - hides default YouTube image!
+          if (!_hasStartedPlaying)
             const Positioned.fill(
               child: ColoredBox(color: Colors.black),
             ),
 
-          // Loading spinner if user tapped play but not ready yet
-          if (!_isYouTubeReady && _isPlaying)
+          // Loading spinner if user tapped play but video has not started rendering yet
+          if (!_hasStartedPlaying && _isPlaying)
             const Center(
               child: CircularProgressIndicator(color: AppColors.gold),
             ),
