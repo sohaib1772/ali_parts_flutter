@@ -2,11 +2,40 @@ import 'dart:async';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'app_logger.dart';
 
-class _CachedStream {
-  final String url;
+/// Represents resolved playable streams for a YouTube video.
+class YouTubePlayableStreams {
+  /// The video stream URL (MP4 H.264 up to 1080p/720p).
+  final String videoUrl;
+
+  /// The audio stream URL (MP4 AAC stereo). Null if audio is already muxed into videoUrl.
+  final String? audioUrl;
+
+  /// Quality label (e.g. "1080p", "720p", "360p").
+  final String? qualityLabel;
+
+  /// Video width in pixels.
+  final int? width;
+
+  /// Video height in pixels.
+  final int? height;
+
+  const YouTubePlayableStreams({
+    required this.videoUrl,
+    this.audioUrl,
+    this.qualityLabel,
+    this.width,
+    this.height,
+  });
+
+  /// True if video and audio are separate adaptive streams.
+  bool get isAdaptive => audioUrl != null && audioUrl!.isNotEmpty;
+}
+
+class _CachedStreams {
+  final YouTubePlayableStreams streams;
   final DateTime expiresAt;
 
-  _CachedStream({required this.url, required this.expiresAt});
+  _CachedStreams({required this.streams, required this.expiresAt});
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
@@ -16,7 +45,7 @@ class _CachedStream {
 class YouTubeHelper {
   YouTubeHelper._();
 
-  static final Map<String, _CachedStream> _streamCache = {};
+  static final Map<String, _CachedStreams> _streamCache = {};
 
   /// Checks if a given URL is a YouTube link (shorts, watch, youtu.be, embed, etc.)
   static bool isYouTubeUrl(String? url) {
@@ -80,15 +109,18 @@ class YouTubeHelper {
     return '';
   }
 
-  /// Resolves a YouTube URL into a direct playable stream URL (MP4)
-  /// that can be used directly with `VideoPlayerController.networkUrl`.
-  static Future<String?> resolveStreamUrl(String rawUrl) async {
+  /// Resolves a YouTube URL into high-definition playable stream(s).
+  ///
+  /// YouTube serves HD resolutions (720p, 1080p) as separate adaptive video and audio
+  /// streams. This method extracts the highest available H.264 (avc1) MP4 video stream
+  /// (up to 1080p/720p) and AAC MP4 audio stream for flawless cross-platform playback.
+  static Future<YouTubePlayableStreams?> resolveStreams(String rawUrl) async {
     final id = extractVideoId(rawUrl);
     if (id == null) return null;
 
     final cached = _streamCache[id];
     if (cached != null && !cached.isExpired) {
-      return cached.url;
+      return cached.streams;
     }
 
     YoutubeExplode? yt;
@@ -96,12 +128,110 @@ class YouTubeHelper {
       yt = YoutubeExplode();
       final manifest = await yt.videos.streamsClient.getManifest(id);
 
-      // 1. Prefer muxed stream (video + audio together)
+      // 1. Prefer highest resolution MP4 (H.264 / avc1) video-only stream
+      // along with highest quality AAC MP4 audio stream for full 1080p/720p HD.
+      final mp4Videos = manifest.videoOnly
+          .where((s) => s.container.name == 'mp4' && s.videoCodec.startsWith('avc1'))
+          .toList();
+
+      final mp4Audios = manifest.audioOnly
+          .where((s) => s.container.name == 'mp4')
+          .toList();
+
+      if (mp4Videos.isNotEmpty && mp4Audios.isNotEmpty) {
+        mp4Videos.sort((a, b) => b.bitrate.compareTo(a.bitrate));
+        mp4Audios.sort((a, b) => b.bitrate.compareTo(a.bitrate));
+
+        final bestVideo = mp4Videos.first;
+        final bestAudio = mp4Audios.first;
+
+        final result = YouTubePlayableStreams(
+          videoUrl: bestVideo.url.toString(),
+          audioUrl: bestAudio.url.toString(),
+          qualityLabel: bestVideo.qualityLabel,
+          width: bestVideo.videoResolution.width,
+          height: bestVideo.videoResolution.height,
+        );
+
+        _streamCache[id] = _CachedStreams(
+          streams: result,
+          expiresAt: DateTime.now().add(const Duration(hours: 3)),
+        );
+        return result;
+      }
+
+      // 2. Fallback to muxed stream (video + audio together, usually 360p)
+      if (manifest.muxed.isNotEmpty) {
+        final streamInfo = manifest.muxed.withHighestBitrate();
+        final result = YouTubePlayableStreams(
+          videoUrl: streamInfo.url.toString(),
+          audioUrl: null,
+          qualityLabel: streamInfo.qualityLabel,
+          width: streamInfo.videoResolution.width,
+          height: streamInfo.videoResolution.height,
+        );
+
+        _streamCache[id] = _CachedStreams(
+          streams: result,
+          expiresAt: DateTime.now().add(const Duration(hours: 3)),
+        );
+        return result;
+      }
+
+      // 3. Fallback to any video-only stream
+      if (manifest.videoOnly.isNotEmpty) {
+        final streamInfo = manifest.videoOnly.withHighestBitrate();
+        final result = YouTubePlayableStreams(
+          videoUrl: streamInfo.url.toString(),
+          audioUrl: null,
+          qualityLabel: streamInfo.qualityLabel,
+          width: streamInfo.videoResolution.width,
+          height: streamInfo.videoResolution.height,
+        );
+
+        _streamCache[id] = _CachedStreams(
+          streams: result,
+          expiresAt: DateTime.now().add(const Duration(hours: 3)),
+        );
+        return result;
+      }
+    } catch (e) {
+      AppLogger.e('Error extracting YouTube streams for $id: $e');
+    } finally {
+      yt?.close();
+    }
+    return null;
+  }
+
+  /// Resolves a YouTube URL into a direct playable stream URL (MP4)
+  /// that can be used directly with `VideoPlayerController.networkUrl`.
+  static Future<String?> resolveStreamUrl(String rawUrl) async {
+    final id = extractVideoId(rawUrl);
+    if (id == null) return null;
+
+    final cached = _streamCache[id];
+    if (cached != null && !cached.isExpired && cached.streams.audioUrl == null) {
+      return cached.streams.videoUrl;
+    }
+
+    YoutubeExplode? yt;
+    try {
+      yt = YoutubeExplode();
+      final manifest = await yt.videos.streamsClient.getManifest(id);
+
+      // 1. Prefer progressive muxed stream (audio + video in a single track)
+      // This guarantees zero AudioFocus collision on Android and smooth uninterrupted playback.
       if (manifest.muxed.isNotEmpty) {
         final streamInfo = manifest.muxed.withHighestBitrate();
         final url = streamInfo.url.toString();
-        _streamCache[id] = _CachedStream(
-          url: url,
+        _streamCache[id] = _CachedStreams(
+          streams: YouTubePlayableStreams(
+            videoUrl: url,
+            audioUrl: null,
+            qualityLabel: streamInfo.qualityLabel,
+            width: streamInfo.videoResolution.width,
+            height: streamInfo.videoResolution.height,
+          ),
           expiresAt: DateTime.now().add(const Duration(hours: 3)),
         );
         return url;
@@ -111,10 +241,6 @@ class YouTubeHelper {
       if (manifest.videoOnly.isNotEmpty) {
         final streamInfo = manifest.videoOnly.withHighestBitrate();
         final url = streamInfo.url.toString();
-        _streamCache[id] = _CachedStream(
-          url: url,
-          expiresAt: DateTime.now().add(const Duration(hours: 3)),
-        );
         return url;
       }
     } catch (e) {

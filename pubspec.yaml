@@ -38,6 +38,8 @@ dependencies:
 
   # WebView & Video Engine
   webview_flutter: ^4.10.0
+  webview_flutter_android: ^4.12.0
+  webview_flutter_wkwebview: ^3.25.0
   video_player: ^2.9.2
 
   # Networking & REST API

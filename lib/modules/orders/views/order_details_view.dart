@@ -82,14 +82,14 @@ class _OrderDetailsViewState extends State<OrderDetailsView> {
 
     if (confirmed == true) {
       setState(() => _isCancelling = true);
-      final success = await _orderRepo.cancelOrder(_order.id);
+      final result = await _orderRepo.cancelOrder(_order.id);
       setState(() => _isCancelling = false);
 
-      if (success) {
+      if (result.success) {
         Get.back(result: true);
         Get.snackbar('تم الإلغاء', 'تم إلغاء الطلب بنجاح', backgroundColor: AppColors.navyDark, colorText: Colors.white);
       } else {
-        Get.snackbar('خطأ', 'تعذّر إلغاء الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+        Get.snackbar('خطأ', result.message ?? 'تعذّر إلغاء الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
       }
     }
   }

@@ -5,7 +5,6 @@ import '../../app/config/api_constants.dart';
 import '../../app/config/app_constants.dart';
 import '../services/auth_service.dart';
 import '../services/secure_storage_service.dart';
-import '../utils/app_logger.dart';
 
 class DioClient {
   final SecureStorageService _secureStorage;
@@ -65,7 +64,7 @@ class DioClient {
                   }
                 }
               }
-            } catch (e) {}
+            } catch (_) {}
           }
 
           return handler.next(error);

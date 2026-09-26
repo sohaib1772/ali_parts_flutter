@@ -64,6 +64,7 @@ class _AdminViewState extends State<AdminView> {
   String _orderRange = '24h'; // '24h' | '7d' | 'all'
   String _orderStatusFilter = 'all'; // 'all' | 'received' | 'preparing' | 'packed' | 'shipped_group' | 'delivered' | 'cancelled'
   final Map<String, Map<String, dynamic>> _orderCustomerProfiles = {};
+  final Set<String> _selectedOrderIds = {};
   final Map<String, List<Map<String, dynamic>>> _orderItemsMap = {};
   final Set<String> _expandedOrderIds = {};
   String? _updatingOrderStatusId;
@@ -2754,6 +2755,15 @@ class _AdminViewState extends State<AdminView> {
                   bottom: 20,
                   left: 18,
                 ),
+
+                // Floating Actions Bar for Selected Orders
+                if (_selectedTab == 1 && _selectedOrderIds.isNotEmpty)
+                  Positioned(
+                    bottom: 20,
+                    left: 16,
+                    right: 16,
+                    child: _buildFloatingOrdersActionBar(),
+                  ),
               ],
             ),
           ),
@@ -4397,10 +4407,61 @@ class _AdminViewState extends State<AdminView> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'الطلبات (${filtered.length})',
-                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                ),
+                if (filtered.isNotEmpty)
+                  InkWell(
+                    onTap: () {
+                      setState(() {
+                        if (_selectedOrderIds.length == filtered.length) {
+                          _selectedOrderIds.clear();
+                        } else {
+                          for (final o in filtered) {
+                            final id = o['id']?.toString();
+                            if (id != null) _selectedOrderIds.add(id);
+                          }
+                        }
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: Checkbox(
+                              value: filtered.isNotEmpty && _selectedOrderIds.length == filtered.length,
+                              activeColor: const Color(0xFF0F172A),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                              onChanged: (val) {
+                                setState(() {
+                                  if (val == true) {
+                                    for (final o in filtered) {
+                                      final id = o['id']?.toString();
+                                      if (id != null) _selectedOrderIds.add(id);
+                                    }
+                                  } else {
+                                    _selectedOrderIds.clear();
+                                  }
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'تحديد الكل (${filtered.length})',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    'الطلبات (${filtered.length})',
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  ),
                 Text(
                   '${filtered.length} طلب نشط',
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
@@ -4685,6 +4746,7 @@ class _AdminViewState extends State<AdminView> {
         : (addrPhone != '—' ? addrPhone : '');
     final isBlocked = profile?['is_blocked'] == true;
     final phoneForCall = customerPhone.isNotEmpty ? customerPhone : addrPhone;
+    final isSelected = _selectedOrderIds.contains(orderId);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -4692,10 +4754,13 @@ class _AdminViewState extends State<AdminView> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: isSelected ? AppColors.gold : const Color(0xFFE2E8F0),
+          width: isSelected ? 1.6 : 1.0,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
+            color: isSelected ? AppColors.gold.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.02),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -4704,12 +4769,31 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top Row: #103 + Status Pill + Reviewed Tag
+          // Top Row: Checkbox + #103 + Status Pill + Reviewed Tag
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
                 children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Checkbox(
+                      value: isSelected,
+                      activeColor: const Color(0xFF0F172A),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedOrderIds.add(orderId);
+                          } else {
+                            _selectedOrderIds.remove(orderId);
+                          }
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Text(
                     '#$orderNum',
                     style: const TextStyle(
@@ -5376,27 +5460,343 @@ class _AdminViewState extends State<AdminView> {
   }
 
   void _deleteSingleOrder(String id) {
+    final secretCtrl = TextEditingController();
     Get.dialog(
       AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('حذف الطلب', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
-        content: const Text('سيتم حذف هذا الطلب بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.'),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: Color(0xFFDC2626), size: 22),
+            SizedBox(width: 8),
+            Text('حذف الطلب نهائياً', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFDC2626))),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'سيتم حذف هذا الطلب بشكل نهائي من قاعدة البيانات. لا يمكن التراجع عن هذا الإجراء.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF334155)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: secretCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                hintText: 'أدخل الرمز السري للحذف (env)...',
+                hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                prefixIcon: const Icon(IconsaxPlusLinear.key, size: 18, color: Color(0xFFDC2626)),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
           ElevatedButton(
             onPressed: () async {
+              final secret = secretCtrl.text.trim();
+              if (secret.isEmpty) {
+                Get.snackbar('تنبيه', 'يرجى إدخال الرمز السري للحذف', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                return;
+              }
               Get.back();
               try {
                 final dio = Get.find<DioClient>().dio;
-                await dio.delete('/rest/v1/orders', queryParameters: {'id': 'eq.$id'});
-                Get.snackbar('تم الحذف', 'تم حذف الطلب بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
-                _loadOrders();
+                final res = await dio.post(
+                  ApiConstants.apiAdminDeleteOrders,
+                  data: {
+                    'secret': secret,
+                    'order_ids': [id],
+                  },
+                );
+                if (res.statusCode == 200 && res.data is Map && res.data['ok'] == true) {
+                  Get.snackbar('تم الحذف', res.data['message'] ?? 'تم حذف الطلب بنجاح', backgroundColor: AppColors.inStock, colorText: Colors.white);
+                  setState(() => _selectedOrderIds.remove(id));
+                  _loadOrders();
+                } else {
+                  final err = (res.data is Map ? res.data['error'] : null) ?? 'الرمز السري غير صحيح';
+                  Get.snackbar('فشل الحذف', err, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                }
+              } on DioException catch (de) {
+                final msg = de.response?.data is Map ? de.response?.data['error'] : 'الرمز السري غير صحيح أو حدث خطأ';
+                Get.snackbar('فشل الحذف', msg ?? 'الرمز السري غير صحيح', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
               } catch (_) {
-                Get.snackbar('خطأ', 'تعذر حذف الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                Get.snackbar('خطأ', 'تعذر الاتصال بالسيرفر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-            child: const Text('حذف نهائي'),
+            child: const Text('تأكيد الحذف', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openArchiveSelectedOrdersDialog() {
+    if (_selectedOrderIds.isEmpty) return;
+    final secretCtrl = TextEditingController();
+    final count = _selectedOrderIds.length;
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(IconsaxPlusBold.archive, color: Color(0xFFD97706), size: 22),
+            const SizedBox(width: 8),
+            Text(
+              'أرشفة الطلبات المحددة ($count)',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF0F172A)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'سيتم أرشفة $count طلبات محددة ونقلها إلى سكرين الطلبات المأرشفة.',
+              style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: secretCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                hintText: 'أدخل الرمز السري للأرشفة (env)...',
+                hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                prefixIcon: const Icon(IconsaxPlusLinear.key, size: 18, color: Color(0xFFD97706)),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              final secret = secretCtrl.text.trim();
+              if (secret.isEmpty) {
+                Get.snackbar('تنبيه', 'يرجى إدخال الرمز السري للأرشفة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                return;
+              }
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                final res = await dio.post(
+                  ApiConstants.apiAdminArchiveOrders,
+                  data: {
+                    'secret': secret,
+                    'order_ids': _selectedOrderIds.toList(),
+                  },
+                );
+                if (res.statusCode == 200 && res.data is Map && res.data['ok'] == true) {
+                  Get.snackbar(
+                    'تمت الأرشفة',
+                    res.data['message'] ?? 'تمت أرشفة الطلبات المحددة بنجاح ✓',
+                    backgroundColor: AppColors.inStock,
+                    colorText: Colors.white,
+                    duration: const Duration(seconds: 4),
+                  );
+                  setState(() => _selectedOrderIds.clear());
+                  _loadOrders();
+                } else {
+                  final err = (res.data is Map ? res.data['error'] : null) ?? 'الرمز السري غير صحيح';
+                  Get.snackbar('فشل الأرشفة', err, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                }
+              } on DioException catch (de) {
+                final msg = de.response?.data is Map ? de.response?.data['error'] : 'الرمز السري غير صحيح أو حدث خطأ';
+                Get.snackbar('فشل الأرشفة', msg ?? 'الرمز السري غير صحيح', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر الاتصال بالسيرفر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD97706),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('تأكيد الأرشفة', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openDeleteSelectedOrdersDialog() {
+    if (_selectedOrderIds.isEmpty) return;
+    final secretCtrl = TextEditingController();
+    final count = _selectedOrderIds.length;
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever_rounded, color: Color(0xFFDC2626), size: 22),
+            const SizedBox(width: 8),
+            Text(
+              'حذف الطلبات المحددة ($count)',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFDC2626)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'سيتم حذف $count طلبات محددة بشكل نهائي من قاعدة البيانات. لا يمكن التراجع عن هذا الإجراء.',
+              style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: secretCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                hintText: 'أدخل الرمز السري للحذف (env)...',
+                hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                prefixIcon: const Icon(IconsaxPlusLinear.key, size: 18, color: Color(0xFFDC2626)),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              final secret = secretCtrl.text.trim();
+              if (secret.isEmpty) {
+                Get.snackbar('تنبيه', 'يرجى إدخال الرمز السري للحذف', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                return;
+              }
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                final res = await dio.post(
+                  ApiConstants.apiAdminDeleteOrders,
+                  data: {
+                    'secret': secret,
+                    'order_ids': _selectedOrderIds.toList(),
+                  },
+                );
+                if (res.statusCode == 200 && res.data is Map && res.data['ok'] == true) {
+                  Get.snackbar(
+                    'تم الحذف',
+                    res.data['message'] ?? 'تم حذف الطلبات المحددة بنجاح ✓',
+                    backgroundColor: AppColors.inStock,
+                    colorText: Colors.white,
+                    duration: const Duration(seconds: 4),
+                  );
+                  setState(() => _selectedOrderIds.clear());
+                  _loadOrders();
+                } else {
+                  final err = (res.data is Map ? res.data['error'] : null) ?? 'الرمز السري غير صحيح';
+                  Get.snackbar('فشل الحذف', err, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                }
+              } on DioException catch (de) {
+                final msg = de.response?.data is Map ? de.response?.data['error'] : 'الرمز السري غير صحيح أو حدث خطأ';
+                Get.snackbar('فشل الحذف', msg ?? 'الرمز السري غير صحيح', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر الاتصال بالسيرفر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('تأكيد الحذف', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFloatingOrdersActionBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A).withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.5), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.gold,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '${_selectedOrderIds.length} محدد',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () => setState(() => _selectedOrderIds.clear()),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white70,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          ElevatedButton.icon(
+            onPressed: _openArchiveSelectedOrdersDialog,
+            icon: const Icon(IconsaxPlusBold.archive_1, size: 15, color: Colors.white),
+            label: const Text('أرشفة', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD97706),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: _openDeleteSelectedOrdersDialog,
+            icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Colors.white),
+            label: const Text('حذف', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ],
       ),

@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../../app/config/api_constants.dart';
 import '../../core/network/dio_client.dart';
 import '../../core/utils/app_logger.dart';
@@ -93,7 +94,7 @@ class OrderRepository {
   }
 
   /// Cancel order through Supabase RPC cancel_my_order
-  Future<bool> cancelOrder(String orderId) async {
+  Future<({bool success, String? message})> cancelOrder(String orderId) async {
     try {
       final response = await _dioClient.dio.post(
         '/rest/v1/rpc/cancel_my_order',
@@ -101,10 +102,22 @@ class OrderRepository {
           'p_order_id': orderId,
         },
       );
-      return response.statusCode == 200 || response.statusCode == 204;
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return (success: true, message: null);
+      }
+      return (success: false, message: 'تعذّر إلغاء الطلب');
+    } on DioException catch (e) {
+      AppLogger.e('Error cancelling order', e);
+      String? msg;
+      if (e.response?.data is Map) {
+        msg = e.response?.data['message']?.toString() ??
+            e.response?.data['error_description']?.toString() ??
+            e.response?.data['error']?.toString();
+      }
+      return (success: false, message: msg ?? 'تعذّر إلغاء الطلب');
     } catch (e) {
       AppLogger.e('Error cancelling order', e);
-      return false;
+      return (success: false, message: 'تعذّر إلغاء الطلب');
     }
   }
 }

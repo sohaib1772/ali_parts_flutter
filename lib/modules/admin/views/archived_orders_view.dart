@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -115,32 +116,85 @@ class _ArchivedOrdersViewState extends State<ArchivedOrdersView> {
   }
 
   Future<void> _deletePermanently(String orderId) async {
-    final confirmed = await Get.dialog<bool>(
+    final secretCtrl = TextEditingController();
+    Get.dialog(
       AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('حذف نهائي', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
-        content: const Text('هل أنت متأكد من حذف هذا الطلب نهائياً من قاعدة البيانات؟ لا يمكن التراجع عن هذا الإجراء.'),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: Color(0xFFDC2626), size: 22),
+            SizedBox(width: 8),
+            Text('حذف الطلب نهائياً', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFDC2626))),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'سيتم حذف هذا الطلب بشكل نهائي من قاعدة البيانات. لا يمكن التراجع عن هذا الإجراء.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF334155)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: secretCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                hintText: 'أدخل الرمز السري للحذف (env)...',
+                hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                prefixIcon: const Icon(IconsaxPlusLinear.key, size: 18, color: Color(0xFFDC2626)),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Get.back(result: false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Get.back(), child: const Text('إلغاء')),
           ElevatedButton(
-            onPressed: () => Get.back(result: true),
+            onPressed: () async {
+              final secret = secretCtrl.text.trim();
+              if (secret.isEmpty) {
+                Get.snackbar('تنبيه', 'يرجى إدخال الرمز السري للحذف', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                return;
+              }
+              Get.back();
+              try {
+                final dio = Get.find<DioClient>().dio;
+                final res = await dio.post(
+                  ApiConstants.apiAdminDeleteOrders,
+                  data: {
+                    'secret': secret,
+                    'order_ids': [orderId],
+                  },
+                );
+                if (res.statusCode == 200 && res.data is Map && res.data['ok'] == true) {
+                  Get.snackbar(
+                    'تم الحذف',
+                    res.data['message'] ?? 'تم حذف الطلب بشكل نهائي',
+                    backgroundColor: AppColors.inStock,
+                    colorText: Colors.white,
+                  );
+                  _loadArchivedOrders();
+                } else {
+                  final err = (res.data is Map ? res.data['error'] : null) ?? 'الرمز السري غير صحيح';
+                  Get.snackbar('فشل الحذف', err, backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+                }
+              } on DioException catch (de) {
+                final msg = de.response?.data is Map ? de.response?.data['error'] : 'الرمز السري غير صحيح أو حدث خطأ';
+                Get.snackbar('فشل الحذف', msg ?? 'الرمز السري غير صحيح', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              } catch (_) {
+                Get.snackbar('خطأ', 'تعذر الاتصال بالسيرفر', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
+              }
+            },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-            child: const Text('حذف نهائي'),
+            child: const Text('تأكيد الحذف', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
-
-    if (confirmed != true) return;
-
-    try {
-      final dio = Get.find<DioClient>().dio;
-      await dio.delete(ApiConstants.orders, queryParameters: {'id': 'eq.$orderId'});
-      Get.snackbar('تم', 'تم حذف الطلب بشكل نهائي', backgroundColor: AppColors.inStock, colorText: Colors.white);
-      _loadArchivedOrders();
-    } catch (_) {
-      Get.snackbar('خطأ', 'تعذر حذف الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
-    }
   }
 
   String _formatDateTime(String? iso) {
@@ -414,12 +468,29 @@ class _ArchivedOrdersViewState extends State<ArchivedOrdersView> {
                                       ],
                                     ),
                                     const SizedBox(height: 4),
-                                    Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    Wrap(
+                                      alignment: WrapAlignment.spaceBetween,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      spacing: 12,
+                                      runSpacing: 4,
                                       children: [
-                                        Text('تاريخ الطلب: $createdAt', style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
-                                        if (archivedAt != '—')
-                                          Text('تاريخ الأرشفة: $archivedAt', style: const TextStyle(fontSize: 11, color: Color(0xFFD97706))),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.access_time_rounded, size: 12, color: Color(0xFF94A3B8)),
+                                            const SizedBox(width: 4),
+                                            Text('تاريخ الطلب: $createdAt', style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+                                          ],
+                                        ),
+                                        if (archivedAt.isNotEmpty && archivedAt != '—' && archivedAt != '-')
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(IconsaxPlusLinear.archive_1, size: 12, color: Color(0xFFD97706)),
+                                              const SizedBox(width: 4),
+                                              Text('تاريخ الأرشفة: $archivedAt', style: const TextStyle(fontSize: 11, color: Color(0xFFD97706), fontWeight: FontWeight.w600)),
+                                            ],
+                                          ),
                                       ],
                                     ),
                                     const SizedBox(height: 12),

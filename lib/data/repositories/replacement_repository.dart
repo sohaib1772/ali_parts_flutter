@@ -133,13 +133,6 @@ class ReplacementRepository {
     required String reason,
     List<String> attachments = const [],
   }) async {
-    print(userId);
-    print(orderId);
-    print(orderItemId);
-    print(productId);
-    print(productNameAr);
-    print(reason);
-    print(attachments);
     try {
       final response = await _dioClient.dio.post(
         ApiConstants.replacementRequests,
