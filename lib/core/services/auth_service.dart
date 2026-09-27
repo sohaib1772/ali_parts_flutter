@@ -12,6 +12,8 @@ import '../../app/config/app_constants.dart';
 import '../../app/theme/app_colors.dart';
 import '../../data/models/user_model.dart';
 import '../utils/app_logger.dart';
+import '../../app/routes/app_routes.dart';
+import '../../modules/reels/controllers/reels_controller.dart';
 import 'cart_service.dart';
 import 'favorites_service.dart';
 import 'notification_service.dart';
@@ -39,6 +41,29 @@ class AuthService extends GetxService {
   StreamSubscription<Uri>? _linkSubscription;
   Completer<Map<String, dynamic>>? _authCompleter;
   String? _currentCodeVerifier;
+  Uri? _pendingDeepLinkUri;
+  String? _lastHandledDeepLink;
+  DateTime? _lastDeepLinkTime;
+  bool _isNavigatingToReels = false;
+
+  bool get _isNavigatorReady {
+    try {
+      return Get.key.currentState != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Called after splash screen completes and MainNav is mounted
+  void checkAndExecutePendingDeepLink() {
+    if (_pendingDeepLinkUri != null) {
+      final uri = _pendingDeepLinkUri!;
+      _pendingDeepLinkUri = null;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _handleIncomingRedirect(uri);
+      });
+    }
+  }
 
   static const String redirectUrl = 'com.mkteb.ali.chevrolet://auth';
 
@@ -70,9 +95,107 @@ class AuthService extends GetxService {
         AppLogger.e('Error on deep link stream', err);
       },
     );
+
+    // Check initial deep link on cold launch
+    _appLinks.getInitialLink().then((uri) {
+      if (uri != null) {
+        AppLogger.d('Received initial launch deep link: $uri');
+        _handleIncomingRedirect(uri);
+      }
+    }).catchError((err) {
+      AppLogger.e('Error checking initial deep link', err);
+    });
   }
 
   void _handleIncomingRedirect(Uri uri) async {
+    // 1. Reel / Banner Deep Link
+    final isReelLink = ((uri.host == 'maktabali.com' || uri.host == 'www.maktabali.com') &&
+            (uri.path.startsWith('/reels') || uri.path.startsWith('/reel') || uri.path.startsWith('/offers'))) ||
+        (uri.scheme == 'com.mkteb.ali.chevrolet' &&
+            (uri.host == 'reel' ||
+                uri.host == 'reels' ||
+                uri.host == 'offers' ||
+                uri.path.startsWith('/reel') ||
+                uri.path.startsWith('/reels') ||
+                uri.path.startsWith('/offers')));
+
+    if (isReelLink) {
+      String? bannerId = uri.queryParameters['id'] ?? uri.queryParameters['bannerId'];
+      if (bannerId == null || bannerId.isEmpty) {
+        final segments = uri.pathSegments;
+        if (segments.isNotEmpty &&
+            segments.last != 'reels' &&
+            segments.last != 'reel' &&
+            segments.last != 'offers') {
+          bannerId = segments.last;
+        }
+      }
+
+      // 1. De-duplicate: ignore if the exact same link was handled recently (within 4 seconds)
+      final uriString = uri.toString();
+      final now = DateTime.now();
+      if (_lastHandledDeepLink == uriString &&
+          _lastDeepLinkTime != null &&
+          now.difference(_lastDeepLinkTime!) < const Duration(seconds: 4)) {
+        AppLogger.d('Ignoring duplicate deep link within cooldown: $uriString');
+        return;
+      }
+
+      // 2. Prevent concurrent navigations
+      if (_isNavigatingToReels) {
+        AppLogger.d('Already navigating to reels, skipping duplicate invocation');
+        return;
+      }
+
+      // If navigator is not ready yet or still on splash screen, defer until splash completes
+      if (!_isNavigatorReady || Get.currentRoute == AppRoutes.splash || Get.currentRoute.isEmpty) {
+        AppLogger.d('Navigator not ready yet or in splash, queuing pending deep link: $uri');
+        _pendingDeepLinkUri = uri;
+        return;
+      }
+
+      _lastHandledDeepLink = uriString;
+      _lastDeepLinkTime = now;
+      _isNavigatingToReels = true;
+
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (!_isNavigatorReady) {
+          _pendingDeepLinkUri = uri;
+          _isNavigatingToReels = false;
+          return;
+        }
+        try {
+          if (Get.currentRoute == AppRoutes.reels) {
+            _isNavigatingToReels = false;
+            if (bannerId != null && bannerId.isNotEmpty && Get.isRegistered<ReelsController>()) {
+              final reelsCtrl = Get.find<ReelsController>();
+              final currentBanner = reelsCtrl.banners.isNotEmpty &&
+                      reelsCtrl.currentIndex.value < reelsCtrl.banners.length
+                  ? reelsCtrl.banners[reelsCtrl.currentIndex.value].id
+                  : null;
+              if (currentBanner != bannerId) {
+                reelsCtrl.handleNewArguments({'targetBannerId': bannerId});
+              }
+            }
+          } else {
+            if (bannerId != null && bannerId.isNotEmpty) {
+              Get.toNamed(AppRoutes.reels, arguments: {'targetBannerId': bannerId});
+            } else {
+              Get.toNamed(AppRoutes.reels);
+            }
+            Future.delayed(const Duration(milliseconds: 1000), () {
+              _isNavigatingToReels = false;
+            });
+          }
+        } catch (e) {
+          _isNavigatingToReels = false;
+          AppLogger.e('Error navigating to reel via deep link: $e');
+        }
+      });
+      return;
+    }
+
+    // 2. OAuth Redirect
     if (uri.scheme != 'com.mkteb.ali.chevrolet' || uri.host != 'auth') {
       return;
     }

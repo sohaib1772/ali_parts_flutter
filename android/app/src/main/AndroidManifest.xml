@@ -36,6 +36,53 @@
                     android:scheme="com.mkteb.ali.chevrolet"
                     android:host="auth" />
             </intent-filter>
+
+            <!-- Deep linking for Reels and App links (maktabali.com) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="maktabali.com"
+                    android:pathPrefix="/reels" />
+                <data
+                    android:scheme="https"
+                    android:host="maktabali.com"
+                    android:pathPrefix="/reel" />
+                <data
+                    android:scheme="https"
+                    android:host="maktabali.com"
+                    android:pathPrefix="/offers" />
+                <data
+                    android:scheme="https"
+                    android:host="www.maktabali.com"
+                    android:pathPrefix="/reels" />
+                <data
+                    android:scheme="https"
+                    android:host="www.maktabali.com"
+                    android:pathPrefix="/reel" />
+                <data
+                    android:scheme="https"
+                    android:host="www.maktabali.com"
+                    android:pathPrefix="/offers" />
+            </intent-filter>
+
+            <!-- Custom Scheme Deep Linking for Reels -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.mkteb.ali.chevrolet"
+                    android:host="reel" />
+                <data
+                    android:scheme="com.mkteb.ali.chevrolet"
+                    android:host="reels" />
+                <data
+                    android:scheme="com.mkteb.ali.chevrolet"
+                    android:host="offers" />
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"

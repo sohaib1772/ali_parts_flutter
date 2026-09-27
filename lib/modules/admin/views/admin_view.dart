@@ -5936,8 +5936,15 @@ class _AdminViewState extends State<AdminView> {
     }
   }
 
-  Future<void> _shareInvoiceAsImage(GlobalKey key, String orderNum, [BuildContext? context]) async {
+  Future<void> _shareInvoiceAsImage(
+    GlobalKey key,
+    String orderNum,
+    List<Map<String, dynamic>> items, {
+    BuildContext? context,
+    bool includeItemPhotos = true,
+  }) async {
     try {
+      await Future.delayed(const Duration(milliseconds: 150));
       final boundary = key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) {
         Get.snackbar('تنبيه', 'تعذر قراءة صورة الفاتورة للمشاركة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
@@ -5956,6 +5963,40 @@ class _AdminViewState extends State<AdminView> {
       final file = await File('${tempDir.path}/invoice_$orderNum.png').create();
       await file.writeAsBytes(pngBytes);
 
+      final shareFiles = <XFile>[XFile(file.path, mimeType: 'image/png')];
+
+      // Download and attach all product photos if enabled
+      if (includeItemPhotos) {
+        final allImages = await _getAllOrderItemImages(items);
+        if (allImages.isNotEmpty) {
+          final dio = Get.find<DioClient>().dio;
+          final downloadTasks = allImages.asMap().entries.map((entry) async {
+            final idx = entry.key;
+            final url = entry.value;
+            try {
+              final photoPath = '${tempDir.path}/item_${orderNum}_${idx + 1}.jpg';
+              final res = await dio.get(
+                url,
+                options: Options(responseType: ResponseType.bytes),
+              );
+              if (res.statusCode == 200 && res.data != null) {
+                final photoFile = File(photoPath);
+                await photoFile.writeAsBytes(res.data as List<int>);
+                return XFile(photoFile.path, mimeType: 'image/jpeg');
+              }
+            } catch (e) {
+              debugPrint('Failed to download item image for sharing: $url ($e)');
+            }
+            return null;
+          });
+
+          final downloaded = await Future.wait(downloadTasks);
+          for (final f in downloaded) {
+            if (f != null) shareFiles.add(f);
+          }
+        }
+      }
+
       Rect? origin;
       if (context != null && context.mounted) {
         final box = context.findRenderObject() as RenderBox?;
@@ -5965,14 +6006,192 @@ class _AdminViewState extends State<AdminView> {
       }
       origin ??= Rect.fromLTWH(0, 0, Get.width, Get.height / 2);
 
+      final hasPhotos = shareFiles.length > 1;
+      final shareText = hasPhotos
+          ? 'فاتورة طلب #$orderNum مع صور القطع (${shareFiles.length - 1} صورة) - علي شيفروليت'
+          : 'فاتورة طلب #$orderNum - علي شيفروليت';
+
       await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'image/png')],
-        text: 'فاتورة طلب #$orderNum - علي شيفروليت',
+        shareFiles,
+        text: shareText,
         sharePositionOrigin: origin,
       );
     } catch (e) {
       Get.snackbar('خطأ', 'تعذر مشاركة صورة الفاتورة', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
     }
+  }
+
+  Future<List<String>> _getAllOrderItemImages(List<Map<String, dynamic>> items) async {
+    final Set<String> imagesSet = {};
+    final Set<String> missingProdIds = {};
+
+    for (final it in items) {
+      final directImg = it['image_url'] as String?;
+      if (directImg != null && directImg.trim().isNotEmpty) {
+        imagesSet.add(directImg.trim());
+      }
+      final img = it['image'] as String?;
+      if (img != null && img.trim().isNotEmpty) {
+        imagesSet.add(img.trim());
+      }
+      if (it['images'] is List) {
+        for (final m in it['images'] as List) {
+          final s = m?.toString().trim();
+          if (s != null && s.isNotEmpty) imagesSet.add(s);
+        }
+      }
+      final prodId = (it['product_id'] ?? it['productId'])?.toString();
+      if (prodId != null && prodId.isNotEmpty) {
+        try {
+          final p = _products.firstWhere((prod) => prod.id == prodId);
+          for (final im in p.images) {
+            if (im.trim().isNotEmpty) imagesSet.add(im.trim());
+          }
+        } catch (_) {
+          missingProdIds.add(prodId);
+        }
+      }
+    }
+
+    if (missingProdIds.isNotEmpty) {
+      try {
+        final dio = Get.find<DioClient>().dio;
+        final res = await dio.get(
+          '/rest/v1/products',
+          queryParameters: {
+            'id': 'in.(${missingProdIds.join(",")})',
+            'select': 'id,images',
+          },
+        );
+        if (res.statusCode == 200 && res.data is List) {
+          for (final row in res.data as List) {
+            if (row is Map && row['images'] is List) {
+              for (final m in row['images'] as List) {
+                final s = m?.toString().trim();
+                if (s != null && s.isNotEmpty) imagesSet.add(s);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Could not fetch additional product images: $e');
+      }
+    }
+
+    return imagesSet.toList();
+  }
+
+  void _showItemImagesDialog(Map<String, dynamic> it) {
+    final List<String> images = [];
+    final direct = it['image_url'] as String?;
+    if (direct != null && direct.trim().isNotEmpty) images.add(direct.trim());
+
+    if (it['images'] is List) {
+      for (final im in it['images'] as List) {
+        final s = im?.toString().trim();
+        if (s != null && s.isNotEmpty && !images.contains(s)) images.add(s);
+      }
+    }
+
+    final prodId = (it['product_id'] ?? it['productId'])?.toString();
+    if (prodId != null && prodId.isNotEmpty) {
+      try {
+        final p = _products.firstWhere((prod) => prod.id == prodId);
+        for (final im in p.images) {
+          final s = im.trim();
+          if (s.isNotEmpty && !images.contains(s)) images.add(s);
+        }
+      } catch (_) {}
+    }
+
+    if (images.isEmpty) return;
+
+    Get.dialog(
+      Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 420),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: () => Get.back(),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  Expanded(
+                    child: Text(
+                      it['name_ar'] as String? ?? 'صور القطعة',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, fontFamily: 'Cairo'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text('${images.length} صور', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 280,
+                child: PageView.builder(
+                  itemCount: images.length,
+                  itemBuilder: (ctx, i) {
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: CachedNetworkImage(
+                        imageUrl: Formatters.thumbUrl(images[i], width: 800, quality: 90),
+                        fit: BoxFit.contain,
+                        placeholder: (_, __) => const Center(child: CircularProgressIndicator(color: AppColors.gold)),
+                        errorWidget: (_, __, ___) => const Center(child: Icon(Icons.broken_image_rounded, size: 36, color: Color(0xFF94A3B8))),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (images.length > 1) ...[
+                const SizedBox(height: 8),
+                const Text('اسحب للتنقل بين جميع صور القطعة', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getOrderItemImage(Map<String, dynamic> it) {
+    final imgUrl = it['image_url'] as String?;
+    if (imgUrl != null && imgUrl.trim().isNotEmpty) return imgUrl.trim();
+
+    final img = it['image'] as String?;
+    if (img != null && img.trim().isNotEmpty) return img.trim();
+
+    if (it['images'] is List && (it['images'] as List).isNotEmpty) {
+      final first = (it['images'] as List).first?.toString();
+      if (first != null && first.trim().isNotEmpty) return first.trim();
+    }
+
+    final prodId = (it['product_id'] ?? it['productId'])?.toString();
+    if (prodId != null && prodId.isNotEmpty && _products.isNotEmpty) {
+      try {
+        final p = _products.firstWhere((prod) => prod.id == prodId);
+        if (p.images.isNotEmpty && p.images.first.trim().isNotEmpty) {
+          return p.images.first.trim();
+        }
+      } catch (_) {}
+    }
+    return '';
   }
 
   void _showInvoicePreviewDialog(Map<String, dynamic> o, List<Map<String, dynamic>> items) {
@@ -5982,6 +6201,20 @@ class _AdminViewState extends State<AdminView> {
     final shipping = ((o['shipping_iqd'] ?? o['shipping_fee_iqd'] ?? o['delivery_fee_iqd']) as num?)?.toDouble() ?? 0.0;
     final pointsUsed = (o['points_used'] as num?)?.toInt() ?? 0;
     bool isSharing = false;
+    bool includeItemPhotos = true;
+
+    // Precache item images for crisp snapshot and instant display
+    for (final it in items) {
+      final img = _getOrderItemImage(it);
+      if (img.isNotEmpty) {
+        try {
+          final ctx = Get.context ?? Get.overlayContext;
+          if (ctx != null) {
+            precacheImage(CachedNetworkImageProvider(Formatters.thumbUrl(img, width: 300, quality: 85)), ctx).catchError((_) {});
+          }
+        } catch (_) {}
+      }
+    }
 
     double itemsSubtotal = 0.0;
     for (final it in items) {
@@ -6115,9 +6348,9 @@ class _AdminViewState extends State<AdminView> {
                                 clipBehavior: Clip.antiAlias,
                                 child: Table(
                                   columnWidths: const {
-                                    0: FlexColumnWidth(4.4), // اسم القطعة
-                                    1: FlexColumnWidth(1.2), // العدد
-                                    2: FlexColumnWidth(2.8), // السعر
+                                    0: FlexColumnWidth(6.4), // اسم القطعة والصورة - مساحة أكبر للاسم بالكامل
+                                    1: FlexColumnWidth(1.0), // العدد
+                                    2: FlexColumnWidth(2.2), // السعر
                                   },
                                   defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                                   children: [
@@ -6128,26 +6361,26 @@ class _AdminViewState extends State<AdminView> {
                                       ),
                                       children: [
                                         Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                                           child: Text(
                                             'القطعة',
-                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, fontFamily: 'Cairo', color: Color(0xFF475569)),
                                           ),
                                         ),
                                         Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+                                          padding: EdgeInsets.symmetric(horizontal: 2, vertical: 6),
                                           child: Text(
                                             'العدد',
                                             textAlign: TextAlign.center,
-                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, fontFamily: 'Cairo', color: Color(0xFF475569)),
                                           ),
                                         ),
                                         Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                                           child: Text(
                                             'السعر',
                                             textAlign: TextAlign.end,
-                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, fontFamily: 'Cairo', color: Color(0xFF475569)),
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, fontFamily: 'Cairo', color: Color(0xFF475569)),
                                           ),
                                         ),
                                       ],
@@ -6175,13 +6408,15 @@ class _AdminViewState extends State<AdminView> {
                                         final iside = it['side'] as String?;
                                         final iprice = (it['unit_price_iqd'] as num?)?.toDouble() ?? 0.0;
                                         final iqty = it['quantity'] ?? 1;
+                                        final oem = (it['oem_number'] as String? ?? '').trim();
+                                        final itemImg = _getOrderItemImage(it);
                                         final sideLabel = iside == 'LH'
                                             ? ' (يسار)'
                                             : iside == 'RH'
                                                 ? ' (يمين)'
-                                                : iside == 'PAIR'
+                                                : iside == 'PAIR' || iside == 'pair'
                                                     ? ' (طقم)'
-                                                    : '';
+                                                    : (iside != null && iside.isNotEmpty ? ' ($iside)' : '');
 
                                         return TableRow(
                                           decoration: BoxDecoration(
@@ -6192,26 +6427,104 @@ class _AdminViewState extends State<AdminView> {
                                           ),
                                           children: [
                                             Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                              child: Text(
-                                                '$iname$sideLabel',
-                                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, fontFamily: 'Cairo', color: Color(0xFF1E293B), height: 1.3),
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                                              child: Row(
+                                                crossAxisAlignment: CrossAxisAlignment.center,
+                                                children: [
+                                                  // Product Image (Square: 48x48) - Tap to view full photos
+                                                  InkWell(
+                                                    onTap: () => _showItemImagesDialog(it),
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    child: Container(
+                                                      width: 42,
+                                                      height: 42,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius: BorderRadius.circular(8),
+                                                        border: Border.all(color: const Color(0xFFCBD5E1), width: 0.8),
+                                                      ),
+                                                      clipBehavior: Clip.antiAlias,
+                                                      child: itemImg.isNotEmpty
+                                                          ? CachedNetworkImage(
+                                                              imageUrl: Formatters.thumbUrl(itemImg, width: 300, quality: 85),
+                                                              fit: BoxFit.cover,
+                                                              placeholder: (_, __) => Container(
+                                                                color: const Color(0xFFF1F5F9),
+                                                                child: const Center(
+                                                                  child: SizedBox(
+                                                                    width: 14,
+                                                                    height: 14,
+                                                                    child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF94A3B8)),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              errorWidget: (_, __, ___) => const Center(
+                                                                child: Icon(Icons.broken_image_rounded, size: 20, color: Color(0xFF94A3B8)),
+                                                              ),
+                                                            )
+                                                          : const Center(
+                                                              child: Icon(Icons.inventory_2_outlined, size: 20, color: Color(0xFF94A3B8)),
+                                                            ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 7),
+                                                  // Product Name & Details
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Text(
+                                                          '$iname$sideLabel',
+                                                          style: const TextStyle(
+                                                            fontSize: 10.0,
+                                                            fontWeight: FontWeight.bold,
+                                                            fontFamily: 'Cairo',
+                                                            color: Color(0xFF1E293B),
+                                                            height: 1.25,
+                                                          ),
+                                                          softWrap: true,
+                                                        ),
+                                                        if (oem.isNotEmpty) ...[
+                                                          const SizedBox(height: 2),
+                                                          Text(
+                                                            'OEM: $oem',
+                                                            style: const TextStyle(
+                                                              fontSize: 8.5,
+                                                              fontFamily: 'monospace',
+                                                              color: Color(0xFF64748B),
+                                                            ),
+                                                            softWrap: true,
+                                                          ),
+                                                        ],
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                             Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                                              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
                                               child: Text(
                                                 '$iqty',
                                                 textAlign: TextAlign.center,
-                                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontFamily: 'Cairo',
+                                                  color: Color(0xFF0F172A)),
                                               ),
                                             ),
                                             Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                                               child: Text(
                                                 Formatters.formatIQD(iprice * iqty),
                                                 textAlign: TextAlign.end,
-                                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                                                style: const TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w900,
+                                                  fontFamily: 'Cairo',
+                                                  color: Color(0xFF0F172A)),
                                               ),
                                             ),
                                           ],
@@ -6264,7 +6577,61 @@ class _AdminViewState extends State<AdminView> {
                     ),
                   ),
 
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
+
+                  // Toggle to include all item photos with the invoice
+                  InkWell(
+                    onTap: isSharing
+                        ? null
+                        : () => setDlgState(() => includeItemPhotos = !includeItemPhotos),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: includeItemPhotos
+                            ? const Color(0xFFD97706).withValues(alpha: 0.08)
+                            : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: includeItemPhotos
+                              ? const Color(0xFFD97706).withValues(alpha: 0.35)
+                              : const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            includeItemPhotos
+                                ? Icons.check_box_rounded
+                                : Icons.check_box_outline_blank_rounded,
+                            color: includeItemPhotos
+                                ? const Color(0xFFD97706)
+                                : const Color(0xFF64748B),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'مشاركة جميع صور القطع مع الفاتورة',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Cairo',
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                          ),
+                          const Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                            color: Color(0xFF64748B),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
 
                   // Action Buttons Row: Share Image & Close
                   Row(
@@ -6279,19 +6646,42 @@ class _AdminViewState extends State<AdminView> {
                                 ? null
                                 : () async {
                                     setDlgState(() => isSharing = true);
-                                    await _shareInvoiceAsImage(invoiceKey, orderNum, context);
+                                    await _shareInvoiceAsImage(
+                                      invoiceKey,
+                                      orderNum,
+                                      items,
+                                      context: context,
+                                      includeItemPhotos: includeItemPhotos,
+                                    );
                                     if (context.mounted) {
                                       setDlgState(() => isSharing = false);
                                     }
                                   },
                             icon: isSharing
-                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
                                 : const Icon(IconsaxPlusBold.share, size: 18, color: Colors.white),
-                            label: const FittedBox(
+                            label: FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text(
-                                'مشاركة كصورة',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'Cairo', color: Colors.white, height: 1.2),
+                                isSharing
+                                    ? 'جاري تجهيز الصور…'
+                                    : includeItemPhotos
+                                        ? 'مشاركة الفاتورة مع الصور'
+                                        : 'مشاركة الفاتورة فقط',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  fontFamily: 'Cairo',
+                                  color: Colors.white,
+                                  height: 1.2,
+                                ),
                               ),
                             ),
                             style: ElevatedButton.styleFrom(
@@ -6342,10 +6732,10 @@ class _AdminViewState extends State<AdminView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 65,
+          width: 62,
           child: Text(
             label,
-            style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'Cairo'),
           ),
         ),
         const SizedBox(width: 8),
@@ -6354,11 +6744,13 @@ class _AdminViewState extends State<AdminView> {
             value,
             textAlign: TextAlign.end,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11.5,
               fontWeight: FontWeight.bold,
               fontFamily: isMono ? 'monospace' : 'Cairo',
               color: const Color(0xFF0F172A),
+              height: 1.25,
             ),
+            softWrap: true,
           ),
         ),
       ],
@@ -6797,6 +7189,8 @@ class _AdminViewState extends State<AdminView> {
     final isEdit = banner != null;
     final titleCtrl = TextEditingController(text: banner?['title_ar'] ?? '');
     final subtitleCtrl = TextEditingController(text: banner?['subtitle_ar'] ?? '');
+    final manualViewsCtrl = TextEditingController(text: (banner?['manual_views_count'] ?? 0).toString());
+    final manualLikesCtrl = TextEditingController(text: (banner?['manual_likes_count'] ?? 0).toString());
 
     String currentImageUrl = banner?['image_url'] as String? ?? '';
     String currentVideoUrl = (banner?['video_url'] as String?) ?? '';
@@ -7132,6 +7526,132 @@ class _AdminViewState extends State<AdminView> {
                     const SizedBox(height: 6),
                     _buildSettingInput(subtitleCtrl, placeholder: ''),
 
+                    const SizedBox(height: 14),
+
+                    // 5. Views and Likes Management (Real + Manual Booster)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.analytics_outlined, size: 18, color: AppColors.gold),
+                              SizedBox(width: 6),
+                              Text(
+                                'المشاهدات والإعجابات الإضافية',
+                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, fontFamily: 'Cairo', color: Color(0xFF0F172A)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'يمكنك كتابة رقم إضافي هنا ليتم دمجه وعرضه مع الرقم الحقيقي للمستخدمين.',
+                            style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontFamily: 'Cairo'),
+                          ),
+                          const SizedBox(height: 10),
+                          if (isEdit) ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('المشاهدات الحقيقية', style: TextStyle(fontSize: 10, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+                                        Text('${banner['views_count'] ?? 0}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), fontFamily: 'Cairo')),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('المشاهدات الإضافية', style: TextStyle(fontSize: 10, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+                                        TextField(
+                                          controller: manualViewsCtrl,
+                                          keyboardType: TextInputType.number,
+                                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+                                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.zero, border: InputBorder.none),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFFCBD5E1)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('الإعجابات الإضافية (تضاف فوق إعجابات المستخدمين)', style: TextStyle(fontSize: 10, color: Color(0xFF64748B), fontFamily: 'Cairo')),
+                                  TextField(
+                                    controller: manualLikesCtrl,
+                                    keyboardType: TextInputType.number,
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+                                    decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.zero, border: InputBorder.none),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ] else ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('المشاهدات المبدئية', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                                      const SizedBox(height: 4),
+                                      _buildSettingInput(manualViewsCtrl, placeholder: '0'),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('الإعجابات المبدئية', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                                      const SizedBox(height: 4),
+                                      _buildSettingInput(manualLikesCtrl, placeholder: '0'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
                     const SizedBox(height: 20),
 
                     // Save Button
@@ -7178,6 +7698,8 @@ class _AdminViewState extends State<AdminView> {
                                     'video_url': currentVideoUrl.isNotEmpty ? currentVideoUrl : null,
                                     'is_active': true,
                                     'expires_at': null,
+                                    'manual_views_count': int.tryParse(manualViewsCtrl.text.trim()) ?? 0,
+                                    'manual_likes_count': int.tryParse(manualLikesCtrl.text.trim()) ?? 0,
                                   };
 
                                   if (isEdit) {

@@ -148,7 +148,7 @@ class ReelsRepository {
               ApiConstants.profiles,
               queryParameters: {
                 'id': 'in.(${userIds.join(",")})',
-                'select': 'id,full_name,avatar_url,is_blocked',
+                'select': 'id,full_name,avatar_url',
               },
             );
             if ((pRes.statusCode == 200 || pRes.statusCode == 206) && pRes.data is List) {
@@ -319,5 +319,18 @@ class ReelsRepository {
         AppLogger.d('Background comment notification dispatch failed (non-critical): $e');
       }
     });
+  }
+
+  /// Increment view count atomically on the server
+  Future<void> incrementViews(String bannerId) async {
+    if (bannerId.trim().isEmpty) return;
+    try {
+      await _dio.post(
+        '/rest/v1/rpc/increment_banner_views',
+        data: {'p_banner_id': bannerId},
+      );
+    } catch (e) {
+      AppLogger.d('Failed to increment views for banner $bannerId: $e');
+    }
   }
 }

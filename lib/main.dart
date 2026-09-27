@@ -15,6 +15,8 @@ import 'core/services/secure_storage_service.dart';
 import 'app/config/firebase_options.dart';
 import 'core/services/storage_service.dart';
 import 'core/services/auth_service.dart';
+import 'package:force_update_helper/force_update_helper.dart';
+import 'core/services/force_update_service.dart';
 
 /// Top-level FCM background message handler.
 /// Must be a top-level function (not a method).
@@ -109,7 +111,7 @@ class AliPartsApp extends StatelessWidget {
         fallbackLocale: const Locale('ar', 'IQ'),
         builder: (context, child) {
           final mediaQuery = MediaQuery.of(context);
-          return MediaQuery(
+          final appChild = MediaQuery(
             data: mediaQuery.copyWith(
               textScaler: mediaQuery.textScaler.clamp(minScaleFactor: 0.85, maxScaleFactor: 1.15),
             ),
@@ -117,6 +119,15 @@ class AliPartsApp extends StatelessWidget {
               textDirection: TextDirection.rtl,
               child: child ?? const SizedBox.shrink(),
             ),
+          );
+
+          return ForceUpdateWidget(
+            navigatorKey: Get.key,
+            forceUpdateClient: ForceUpdateConfig.createClient(),
+            allowCancel: false,
+            showForceUpdateAlert: ForceUpdateConfig.showForceUpdateDialog,
+            showStoreListing: ForceUpdateConfig.launchStore,
+            child: appChild,
           );
         },
       ),

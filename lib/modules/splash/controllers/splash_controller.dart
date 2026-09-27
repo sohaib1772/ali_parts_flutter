@@ -1,10 +1,10 @@
-import 'dart:io';
 import 'package:get/get.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../core/services/cart_service.dart';
 import '../../../core/services/favorites_service.dart';
 import '../../../core/services/settings_service.dart';
+import '../../../core/services/auth_service.dart';
+import '../../../core/services/force_update_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/utils/app_logger.dart';
 
@@ -24,23 +24,12 @@ class SplashController extends GetxController {
       Future.delayed(const Duration(milliseconds: 1500)),
     ]);
 
-    // Check for force update
+    // Check for force update via force_update_helper client
     try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      final currentVersion = packageInfo.version;
-      final settings = Get.find<SettingsService>();
-      final minVersion = Platform.isIOS ? settings.minAppVersionIos : settings.minAppVersionAndroid;
-
-      AppLogger.d('Force update check: platform=${Platform.isIOS ? "iOS" : "Android"}, '
-          'current=$currentVersion, required=$minVersion, '
-          'settingsLoaded=${settings.settings.length}');
-
-      if (SettingsService.isVersionOutdated(currentVersion, minVersion)) {
-        AppLogger.d('Force update required! Redirecting to update screen');
-        Get.offAllNamed(AppRoutes.forceUpdate, arguments: {
-          'currentVersion': currentVersion,
-          'minVersion': minVersion,
-        });
+      final client = ForceUpdateConfig.createClient();
+      final isRequired = await client.isAppUpdateRequired();
+      if (isRequired) {
+        AppLogger.d('Force update required! ForceUpdateWidget will display the prompt.');
         return;
       }
     } catch (e) {
@@ -50,6 +39,9 @@ class SplashController extends GetxController {
     Get.offAllNamed(AppRoutes.mainNav);
     if (Get.isRegistered<NotificationService>()) {
       Get.find<NotificationService>().checkAndExecutePendingNotification();
+    }
+    if (Get.isRegistered<AuthService>()) {
+      Get.find<AuthService>().checkAndExecutePendingDeepLink();
     }
   }
 }

@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,8 +9,6 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../../../app/routes/app_routes.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/app_logger.dart';
@@ -19,6 +17,7 @@ import '../../../data/models/banner_model.dart';
 import '../../main_nav/controllers/main_nav_controller.dart';
 import '../controllers/reels_controller.dart';
 import '../widgets/reels_comments_sheet.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 class ReelsView extends StatefulWidget {
   final bool isInsideNavBar;
@@ -31,6 +30,7 @@ class ReelsView extends StatefulWidget {
 class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
   final ReelsController controller = Get.put(ReelsController());
   late PageController _pageController;
+  Worker? _pageWorker;
 
   @override
   void initState() {
@@ -46,6 +46,26 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
     _pageController = PageController(
       initialPage: controller.currentIndex.value,
     );
+
+    _pageWorker = ever(controller.currentIndex, (int targetIdx) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          final cur = _pageController.page?.round();
+          if (cur != null && cur != targetIdx) {
+            _pageController.jumpToPage(targetIdx);
+          }
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_pageController.hasClients) {
+              final cur = _pageController.page?.round();
+              if (cur != null && cur != targetIdx) {
+                _pageController.jumpToPage(targetIdx);
+              }
+            }
+          });
+        }
+      });
+    });
   }
 
   @override
@@ -60,6 +80,7 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _pageWorker?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     controller.setTabVisible(false);
     _pageController.dispose();
@@ -67,20 +88,7 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
   }
 
   void _onVideoFinished(int index) {
-    if (index != controller.currentIndex.value) return;
-    if (controller.currentIndex.value < controller.banners.length - 1) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeInOutCubic,
-      );
-    } else if (controller.banners.length > 1) {
-      // Loop back to the first video
-      _pageController.animateToPage(
-        0,
-        duration: const Duration(milliseconds: 550),
-        curve: Curves.easeInOutCubic,
-      );
-    }
+    // In reels, the current video loops continuously until the user swipes
   }
 
   @override
@@ -169,6 +177,7 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                     return _ReelItemCard(
                       key: ValueKey(banner.id),
                       banner: banner,
+                      itemIndex: i,
                       isActive: isEffectiveActive,
                       isInsideNavBar: false,
                       controller: controller,
@@ -177,9 +186,36 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
                   },
                 ),
 
+                // Top Black Mask (Covers YouTube Shorts logo, 3 dots, and headphone icon)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: MediaQuery.of(context).padding.top + 45,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {}, // Blocks taps to YouTube's header menu/search
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black,
+                            Colors.black,
+                            Colors.black.withValues(alpha: 0.80),
+                            Colors.transparent,
+                          ],
+                          stops: const [0.0, 0.55, 0.80, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
                 // 2. Top Navigation & Header
                 Positioned(
-                  top: MediaQuery.of(context).padding.top + 10,
+                  top: MediaQuery.of(context).padding.top + 8,
                   left: 16,
                   right: 16,
                   child: Row(
@@ -252,6 +288,7 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
 
 class _ReelItemCard extends StatefulWidget {
   final BannerModel banner;
+  final int itemIndex;
   final bool isActive;
   final bool isInsideNavBar;
   final ReelsController controller;
@@ -260,6 +297,7 @@ class _ReelItemCard extends StatefulWidget {
   const _ReelItemCard({
     super.key,
     required this.banner,
+    required this.itemIndex,
     required this.isActive,
     required this.isInsideNavBar,
     required this.controller,
@@ -271,26 +309,34 @@ class _ReelItemCard extends StatefulWidget {
 }
 
 class _ReelItemCardState extends State<_ReelItemCard>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   VideoPlayerController? _videoCtrl;
-  WebViewController? _webCtrl;
+  YoutubePlayerController? _ytCtrl;
   bool _isVideoInitialized = false;
-  bool _isYouTubeReady = false;
+  bool _isYouTubeInitialized = false;
   bool _isPlaying = false;
-  bool _hasStartedPlaying = false;
   bool _userPaused = false;
-  bool _isPlayRequested = false;
-  bool _isYouTubeInitializing = false;
-  Worker? _muteWorker;
+  Worker? _pageWorker;
   Worker? _tabWorker;
+  Worker? _muteWorker;
   bool _didTriggerEnd = false;
+  bool _pendingPlay = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  bool get _isActive =>
+      widget.controller.currentIndex.value == widget.itemIndex &&
+      widget.controller.isTabVisible.value;
 
   // Video progress / seek bar
   bool _isScrubbing = false;
   Duration _scrubPosition = Duration.zero;
   Duration _currentPosition = Duration.zero;
   Duration _totalDuration = Duration.zero;
-  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(
+    Duration.zero,
+  );
   bool _wasPlayingBeforeScrub = false;
 
   // Double tap to like heart animation
@@ -309,6 +355,19 @@ class _ReelItemCardState extends State<_ReelItemCard>
 
   String? get _youTubeId =>
       _isYouTube ? YouTubeHelper.extractVideoId(widget.banner.videoUrl) : null;
+
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(fn);
+      });
+    } else {
+      setState(fn);
+    }
+  }
 
   @override
   void initState() {
@@ -354,28 +413,59 @@ class _ReelItemCardState extends State<_ReelItemCard>
     ]).animate(_heartAnimCtrl);
 
     _muteWorker = ever(widget.controller.isMuted, (bool muted) {
-      if (_isYouTube && _webCtrl != null) {
-        _webCtrl!.runJavaScript(muted ? 'muteVideo();' : 'unMuteVideo();');
+      if (_isYouTube && _ytCtrl != null) {
+        if (muted) {
+          _ytCtrl!.mute();
+        } else {
+          _ytCtrl!.unMute();
+        }
       } else {
         _videoCtrl?.setVolume(muted ? 0 : 1);
       }
     });
 
+    _pageWorker = ever(widget.controller.currentIndex, (int currentIdx) {
+      final bool nowActive =
+          currentIdx == widget.itemIndex &&
+          widget.controller.isTabVisible.value;
+      _handleActiveChanged(nowActive);
+    });
+
     _tabWorker = ever(widget.controller.isTabVisible, (bool visible) {
-      if (!visible) {
-        if (_isYouTube) {
-          _webCtrl?.runJavaScript('setActive(false);');
+      final bool nowActive =
+          widget.controller.currentIndex.value == widget.itemIndex && visible;
+      _handleActiveChanged(nowActive);
+    });
+
+    if (_isActive) {
+      if (_isYouTube) {
+        _initYouTube();
+      } else if (_hasVideo) {
+        _initVideo();
+      }
+    }
+  }
+
+  void _handleActiveChanged(bool active) {
+    if (!mounted) return;
+    if (active) {
+      _userPaused = false;
+      _didTriggerEnd = false;
+      if (_isYouTube) {
+        if (_ytCtrl == null) {
+          _initYouTube();
         } else {
-          _videoCtrl?.pause();
-        }
-        if (mounted) setState(() => _isPlaying = false);
-      } else if (widget.isActive) {
-        if (_isYouTube && _webCtrl != null && _isYouTubeReady) {
-          if (_hasStartedPlaying && !_userPaused) {
-            _webCtrl!.runJavaScript('playVideo();');
-            if (mounted) setState(() => _isPlaying = true);
+          _pendingPlay = true;
+          if (_ytCtrl!.value.isReady) {
+            _pendingPlay = false;
+            _ytCtrl!.play();
           }
-        } else if (_videoCtrl != null && _isVideoInitialized) {
+        }
+        _safeSetState(() => _isPlaying = true);
+      } else if (_hasVideo) {
+        if (_videoCtrl == null) {
+          _initVideo();
+        } else if (_isVideoInitialized) {
           if (_videoCtrl!.value.isCompleted ||
               (_totalDuration > Duration.zero &&
                   _currentPosition >=
@@ -383,373 +473,82 @@ class _ReelItemCardState extends State<_ReelItemCard>
             _videoCtrl!.seekTo(Duration.zero);
           }
           _videoCtrl!.play();
-          if (mounted) setState(() => _isPlaying = true);
         }
+        _safeSetState(() => _isPlaying = true);
       }
-    });
-
-    if (_isYouTube) {
-      _initYouTube();
-    } else if (_hasVideo) {
-      _initVideo();
+    } else {
+      _userPaused = false;
+      _pendingPlay = false;
+      if (_isYouTube) {
+        _ytCtrl?.pause();
+      } else {
+        _videoCtrl?.pause();
+      }
+      _safeSetState(() => _isPlaying = false);
     }
   }
 
   @override
   void didUpdateWidget(covariant _ReelItemCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isYouTube) {
-      if (_webCtrl == null && !_isYouTubeInitializing) {
-        _initYouTube();
-      }
-      if (_webCtrl != null) {
-        if (widget.isActive && !oldWidget.isActive) {
-          if (_hasStartedPlaying && !_userPaused) {
-            _webCtrl!.runJavaScript('playVideo();');
-            setState(() => _isPlaying = true);
-          }
-        } else if (!widget.isActive && oldWidget.isActive) {
-          _isPlayRequested = false;
-          _userPaused = true;
-          _webCtrl!.runJavaScript('pauseVideo();');
-          setState(() => _isPlaying = false);
-        }
-        if (widget.controller.isMuted.value !=
-            oldWidget.controller.isMuted.value) {
-          _webCtrl!.runJavaScript(
-            widget.controller.isMuted.value ? 'muteVideo();' : 'unMuteVideo();',
-          );
-        }
-      }
-    } else if (_hasVideo && _videoCtrl != null) {
-      if (widget.isActive && !oldWidget.isActive) {
-        _userPaused = false;
-        _didTriggerEnd = false;
-        if (_videoCtrl!.value.isCompleted ||
-            (_totalDuration > Duration.zero &&
-                _currentPosition >=
-                    _totalDuration - const Duration(milliseconds: 500))) {
-          _videoCtrl!.seekTo(Duration.zero);
-        }
-        _videoCtrl!.play();
-        setState(() => _isPlaying = true);
-      } else if (!widget.isActive && oldWidget.isActive) {
-        _userPaused = false;
-        _videoCtrl!.pause();
-        setState(() => _isPlaying = false);
-      }
-      _videoCtrl!.setVolume(widget.controller.isMuted.value ? 0 : 1);
+    if (widget.itemIndex != oldWidget.itemIndex ||
+        widget.isActive != oldWidget.isActive) {
+      _handleActiveChanged(_isActive);
     }
   }
 
-  Future<void> _initYouTube() async {
+  void _initYouTube() {
     final videoId = _youTubeId;
-    if (videoId == null || _isYouTubeInitializing) return;
-    _isYouTubeInitializing = true;
+    if (videoId == null) return;
+    if (_ytCtrl != null) return;
 
-    try {
-      final ctrl = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.black);
+    _pendingPlay = _isActive;
 
-      if (ctrl.platform is AndroidWebViewController) {
-        await (ctrl.platform as AndroidWebViewController)
-            .setMediaPlaybackRequiresUserGesture(false);
-      }
+    final ytCtrl = YoutubePlayerController(
+      initialVideoId: videoId,
+      flags: YoutubePlayerFlags(
+        autoPlay: _isActive,
+        mute: widget.controller.isMuted.value,
+        hideControls: true,
+        controlsVisibleAtStart: false,
+        disableDragSeek: true,
+        enableCaption: false,
+        loop: false,
+        forceHD: false,
+        hideThumbnail: true,
+        useHybridComposition: true,
+      ),
+    );
 
-      // Desktop Chrome User-Agent: forces YouTube to use desktop player which strictly honors controls=0,
-      // and completely eliminates mobile touch overlay buttons (|<<, pause, >>|) and mobile title bar!
-      await ctrl.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      );
+    ytCtrl.addListener(_ytListener);
+    _ytCtrl = ytCtrl;
+    _isYouTubeInitialized = true;
+    _safeSetState(() {});
+  }
 
-      ctrl.setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (NavigationRequest request) {
-            final url = request.url.toLowerCase();
-            if (url.contains('youtube') ||
-                url.contains('googlevideo.com') ||
-                url.contains('ali-parts') ||
-                url.startsWith('about:blank') ||
-                url.startsWith('data:')) {
-              return NavigationDecision.navigate;
-            }
-            return NavigationDecision.prevent;
-          },
-        ),
-      );
+  void _ytListener() {
+    if (!mounted || _ytCtrl == null) return;
+    final val = _ytCtrl!.value;
+    if (!val.isReady) return;
 
-      ctrl.addJavaScriptChannel(
-        'FlutterBridge',
-        onMessageReceived: (JavaScriptMessage msg) {
-          _handleYouTubeBridgeMessage(msg.message);
-        },
-      );
+    // Trigger pending play when player becomes ready on an active reel
+    if (_isActive &&
+        !_userPaused &&
+        (_pendingPlay || (!val.isPlaying && _isPlaying))) {
+      _pendingPlay = false;
+      _ytCtrl!.play();
+    }
 
-      final html = _buildYouTubeHtml(
-        videoId: videoId,
-        isMuted: widget.controller.isMuted.value,
-        isActive: widget.isActive,
-      );
-
-      if (mounted) {
-        setState(() {
-          _webCtrl = ctrl;
+    if (!_isScrubbing) {
+      _currentPosition = val.position;
+      _totalDuration = val.metaData.duration;
+      _positionNotifier.value = val.position;
+      if (_isPlaying != val.isPlaying) {
+        _safeSetState(() {
+          _isPlaying = val.isPlaying;
         });
       }
-
-      await ctrl.loadHtmlString(html, baseUrl: 'https://ali-parts.com');
-      if (mounted && _isPlayRequested && !_userPaused) {
-        ctrl.runJavaScript('unMuteVideo(); playVideo();');
-      }
-    } catch (e) {
-      AppLogger.e('Error initializing YouTube webview: $e');
-    } finally {
-      _isYouTubeInitializing = false;
     }
-  }
-
-  void _handleYouTubeBridgeMessage(String raw) {
-    try {
-      final data = jsonDecode(raw) as Map<String, dynamic>;
-      final event = data['event'];
-      if (event == 'ready') {
-        if (mounted) {
-          setState(() {
-            _isYouTubeReady = true;
-          });
-          if (_isPlayRequested && !_userPaused) {
-            _webCtrl?.runJavaScript('unMuteVideo(); playVideo();');
-          }
-        }
-      } else if (event == 'playing') {
-        _userPaused = false;
-        if (mounted) {
-          setState(() {
-            _hasStartedPlaying = true;
-            _isPlaying = true;
-          });
-        }
-      } else if (event == 'paused') {
-        if (mounted && _isPlaying) {
-          if (_isPlayRequested && !_userPaused) {
-            _webCtrl?.runJavaScript('playVideo();');
-          } else {
-            setState(() => _isPlaying = false);
-          }
-        }
-      } else if (event == 'ended') {
-        _onYouTubeEnded();
-      } else if (event == 'progress') {
-        if (!_isScrubbing && mounted) {
-          final cur = (data['current'] as num?)?.toDouble() ?? 0.0;
-          final dur = (data['duration'] as num?)?.toDouble() ?? 0.0;
-          _totalDuration = Duration(milliseconds: (dur * 1000).toInt());
-          _currentPosition = Duration(milliseconds: (cur * 1000).toInt());
-          _positionNotifier.value = _currentPosition;
-        }
-      }
-    } catch (_) {}
-  }
-
-  void _onYouTubeEnded() {
-    if (!mounted) return;
-    if (widget.controller.banners.length <= 1) {
-      _webCtrl?.runJavaScript('seekToVideo(0); playVideo();');
-    } else {
-      widget.onVideoFinished();
-    }
-  }
-
-  String _buildYouTubeHtml({
-    required String videoId,
-    required bool isMuted,
-    required bool isActive,
-  }) {
-    return '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      background: #000;
-    }
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-    }
-    #player-container {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      background: #000;
-      pointer-events: none;
-    }
-    #player, iframe {
-      width: 100% !important;
-      height: 100% !important;
-      border: 0 !important;
-      pointer-events: none !important;
-      transform: scale(1.38);
-      transform-origin: center center;
-    }
-  </style>
-</head>
-<body>
-  <div id="player-container">
-    <iframe
-      id="player"
-      src="https://www.youtube.com/embed/$videoId?enablejsapi=1&origin=https://ali-parts.com&autoplay=0&controls=0&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&disablekb=1&fs=0"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-      allowfullscreen>
-    </iframe>
-  </div>
-
-  <script>
-    var player;
-    var isActive = false;
-    var isAppMuted = $isMuted;
-    var isUserPaused = false;
-    var pendingPlay = false;
-    var progressTimer;
-
-    function initPlayer() {
-      if (player) return;
-      try {
-        player = new YT.Player('player', {
-          events: {
-            'onReady': onPlayerReady,
-            'onStateChange': onPlayerStateChange
-          }
-        });
-      } catch(e) {}
-    }
-
-    if (window.YT && window.YT.Player) {
-      initPlayer();
-    } else {
-      window.onYouTubeIframeAPIReady = initPlayer;
-    }
-
-    function onPlayerReady(event) {
-      startProgressTracking();
-      if (window.FlutterBridge) {
-        FlutterBridge.postMessage(JSON.stringify({event: 'ready'}));
-      }
-      if (pendingPlay && !isUserPaused) {
-        playVideo();
-      } else {
-        try { event.target.pauseVideo(); } catch(e) {}
-      }
-    }
-
-    function onPlayerStateChange(event) {
-      if (event.data === YT.PlayerState.PLAYING) {
-        if (window.FlutterBridge) {
-          FlutterBridge.postMessage(JSON.stringify({event: 'playing'}));
-        }
-      } else if (event.data === YT.PlayerState.PAUSED) {
-        if (window.FlutterBridge) {
-          FlutterBridge.postMessage(JSON.stringify({event: 'paused'}));
-        }
-      } else if (event.data === YT.PlayerState.ENDED) {
-        if (window.FlutterBridge) {
-          FlutterBridge.postMessage(JSON.stringify({event: 'ended'}));
-        }
-      }
-    }
-
-    function startProgressTracking() {
-      if (progressTimer) clearInterval(progressTimer);
-      progressTimer = setInterval(function() {
-        if (player && typeof player.getCurrentTime === 'function' && typeof player.getDuration === 'function') {
-          var cur = player.getCurrentTime() || 0;
-          var dur = player.getDuration() || 0;
-          if (window.FlutterBridge) {
-            FlutterBridge.postMessage(JSON.stringify({
-              event: 'progress',
-              current: cur,
-              duration: dur
-            }));
-          }
-        }
-      }, 500);
-    }
-
-    function playVideo() {
-      isUserPaused = false;
-      pendingPlay = true;
-      isActive = true;
-      if (player && typeof player.playVideo === 'function') {
-        try {
-          if (typeof player.getPlayerState === 'function' && player.getPlayerState() === YT.PlayerState.ENDED) {
-            player.seekTo(0, true);
-          }
-        } catch(e) {}
-        try {
-          if (!isAppMuted && typeof player.unMute === 'function') {
-            player.unMute();
-            player.setVolume(100);
-          }
-        } catch(e) {}
-        try { player.playVideo(); } catch(e) {}
-      }
-    }
-
-    function pauseVideo() {
-      isUserPaused = true;
-      isActive = false;
-      pendingPlay = false;
-      if (player && typeof player.pauseVideo === 'function') {
-        try { player.pauseVideo(); } catch(e) {}
-      }
-    }
-
-    function setActive(active) {
-      if (!active) {
-        pauseVideo();
-      }
-    }
-
-    function muteVideo() {
-      isAppMuted = true;
-      if (player && typeof player.mute === 'function') {
-        try { player.mute(); } catch(e) {}
-      }
-    }
-
-    function unMuteVideo() {
-      isAppMuted = false;
-      if (player && typeof player.unMute === 'function') {
-        try {
-          player.unMute();
-          player.setVolume(100);
-        } catch(e) {}
-      }
-    }
-
-    function seekToVideo(sec) {
-      if (player && typeof player.seekTo === 'function') {
-        try { player.seekTo(sec, true); } catch(e) {}
-      }
-    }
-  </script>
-  <script src="https://www.youtube.com/iframe_api"></script>
-</body>
-</html>
-''';
   }
 
   Future<void> _initVideo() async {
@@ -762,24 +561,24 @@ class _ReelItemCardState extends State<_ReelItemCard>
       final vCtrl = VideoPlayerController.networkUrl(videoUri);
       _videoCtrl = vCtrl;
       await vCtrl.initialize();
-      await vCtrl.setLooping(false); // DO NOT loop so it triggers onVideoFinished
+      await vCtrl.setLooping(true);
       await vCtrl.setVolume(widget.controller.isMuted.value ? 0 : 1);
       vCtrl.addListener(_videoListener);
 
       if (mounted) {
-        setState(() {
+        _safeSetState(() {
           _isVideoInitialized = true;
           _totalDuration = vCtrl.value.duration;
           _currentPosition = vCtrl.value.position;
         });
-        if (widget.isActive) {
+        if (_isActive && !_userPaused) {
           vCtrl.play();
-          setState(() => _isPlaying = true);
+          _safeSetState(() => _isPlaying = true);
         }
       }
     } catch (e) {
       AppLogger.e('Error initializing video player: $e');
-      if (mounted) setState(() => _isVideoInitialized = false);
+      if (mounted) _safeSetState(() => _isVideoInitialized = false);
     }
   }
 
@@ -793,27 +592,22 @@ class _ReelItemCardState extends State<_ReelItemCard>
       _totalDuration = val.duration;
       _positionNotifier.value = val.position;
       if (_isPlaying != val.isPlaying) {
-        setState(() {
+        _safeSetState(() {
           _isPlaying = val.isPlaying;
         });
       }
     }
 
-    // Detect video end & auto-advance
-    if (widget.isActive && !_isScrubbing && !_didTriggerEnd) {
+    // Seamless loop replay when video reaches end
+    if (_isActive && !_isScrubbing && !_didTriggerEnd) {
       final pos = val.position;
       final dur = val.duration;
       if (dur > const Duration(milliseconds: 500) &&
           (val.isCompleted || (pos >= dur && pos > Duration.zero))) {
         _didTriggerEnd = true;
-        if (widget.controller.banners.length <= 1) {
-          // If only 1 video in total, replay it
-          _videoCtrl?.seekTo(Duration.zero);
-          _videoCtrl?.play();
-          _didTriggerEnd = false;
-        } else {
-          widget.onVideoFinished();
-        }
+        _videoCtrl?.seekTo(Duration.zero);
+        _videoCtrl?.play();
+        _didTriggerEnd = false;
       }
     } else if (_didTriggerEnd &&
         val.position < val.duration - const Duration(milliseconds: 500)) {
@@ -824,14 +618,15 @@ class _ReelItemCardState extends State<_ReelItemCard>
   @override
   void dispose() {
     _positionNotifier.dispose();
-    _muteWorker?.dispose();
+    _pageWorker?.dispose();
     _tabWorker?.dispose();
+    _muteWorker?.dispose();
     _heartAnimCtrl.dispose();
     _videoCtrl?.removeListener(_videoListener);
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
-    _webCtrl?.loadHtmlString('<html><body style="background:#000;"></body></html>');
-    _webCtrl = null;
+    _ytCtrl?.removeListener(_ytListener);
+    _ytCtrl?.dispose();
     super.dispose();
   }
 
@@ -842,21 +637,15 @@ class _ReelItemCardState extends State<_ReelItemCard>
   }
 
   void _handleSingleTap() {
-    if (_isYouTube) {
-      if (_isPlaying) {
+    if (_isYouTube && _ytCtrl != null) {
+      if (_ytCtrl!.value.isPlaying) {
         _userPaused = true;
-        _isPlayRequested = false;
-        _webCtrl?.runJavaScript('pauseVideo();');
-        setState(() => _isPlaying = false);
+        _ytCtrl!.pause();
+        _safeSetState(() => _isPlaying = false);
       } else {
         _userPaused = false;
-        _isPlayRequested = true;
-        setState(() => _isPlaying = true);
-        if (_webCtrl != null) {
-          _webCtrl!.runJavaScript('unMuteVideo(); playVideo();');
-        } else if (!_isYouTubeInitializing) {
-          _initYouTube();
-        }
+        _ytCtrl!.play();
+        _safeSetState(() => _isPlaying = true);
       }
       return;
     }
@@ -865,11 +654,11 @@ class _ReelItemCardState extends State<_ReelItemCard>
       if (_videoCtrl!.value.isPlaying) {
         _userPaused = true;
         _videoCtrl!.pause();
-        setState(() => _isPlaying = false);
+        _safeSetState(() => _isPlaying = false);
       } else {
         _userPaused = false;
         _videoCtrl!.play();
-        setState(() => _isPlaying = true);
+        _safeSetState(() => _isPlaying = true);
       }
     }
   }
@@ -878,13 +667,13 @@ class _ReelItemCardState extends State<_ReelItemCard>
     if (_totalDuration <= Duration.zero) return;
     HapticFeedback.selectionClick();
     _wasPlayingBeforeScrub = _isPlaying;
-    if (_isYouTube && _webCtrl != null) {
-      _webCtrl!.runJavaScript('pauseVideo();');
+    if (_isYouTube) {
+      _ytCtrl?.pause();
     } else {
       _videoCtrl?.pause();
     }
     final ratio = (dx / width).clamp(0.0, 1.0);
-    setState(() {
+    _safeSetState(() {
       _isScrubbing = true;
       _scrubPosition = _totalDuration * ratio;
     });
@@ -896,7 +685,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
   void _updateScrubbing(double dx, double width) {
     if (_totalDuration <= Duration.zero) return;
     final ratio = (dx / width).clamp(0.0, 1.0);
-    setState(() {
+    _safeSetState(() {
       _scrubPosition = _totalDuration * ratio;
     });
     if (!_isYouTube) {
@@ -907,24 +696,20 @@ class _ReelItemCardState extends State<_ReelItemCard>
   void _endScrubbing() {
     if (!_isScrubbing) return;
     _didTriggerEnd = false;
-    setState(() {
+    _safeSetState(() {
       _isScrubbing = false;
     });
-    if (_isYouTube && _webCtrl != null) {
-      _webCtrl!.runJavaScript(
-        'seekToVideo(${_scrubPosition.inMilliseconds / 1000});',
-      );
+    if (_isYouTube && _ytCtrl != null) {
+      _ytCtrl!.seekTo(_scrubPosition);
       if (_wasPlayingBeforeScrub) {
-        _isPlayRequested = true;
-        _userPaused = false;
-        _webCtrl!.runJavaScript('playVideo();');
-        setState(() => _isPlaying = true);
+        _ytCtrl!.play();
+        _safeSetState(() => _isPlaying = true);
       }
     } else {
       _videoCtrl?.seekTo(_scrubPosition);
       if (_wasPlayingBeforeScrub) {
         _videoCtrl?.play();
-        setState(() => _isPlaying = true);
+        _safeSetState(() => _isPlaying = true);
       }
     }
   }
@@ -938,8 +723,20 @@ class _ReelItemCardState extends State<_ReelItemCard>
     return '$m:$s';
   }
 
+  String _formatCount(int count) {
+    if (count >= 1000000) {
+      final val = count / 1000000;
+      return '${val.toStringAsFixed(val >= 10 ? 0 : 1)}M';
+    } else if (count >= 1000) {
+      final val = count / 1000;
+      return '${val.toStringAsFixed(val >= 10 ? 0 : 1)}K';
+    }
+    return '$count';
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     // Seek bar sits directly near the bottom screen edge
     final double seekBottom = bottomPadding > 0
@@ -1023,12 +820,42 @@ class _ReelItemCardState extends State<_ReelItemCard>
               ),
             ),
 
-          // Bottom Gradient Overlay
+          // Top Black Mask for YouTube Shorts header (attached to each card, moves during vertical scroll)
+          if (_isYouTube)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: (MediaQuery.of(context).padding.top + 32).clamp(
+                58.0,
+                72.0,
+              ),
+              child: IgnorePointer(
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black,
+                        Colors.black,
+                        Colors.black,
+                        Colors.black54,
+                        Colors.transparent,
+                      ],
+                      stops: [0.0, 0.70, 0.84, 0.93, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Bottom Dark Gradient Overlay (سواد في الأسفل لتغطية شريط اليوتيوب ومعلومات القناة وإبراز النصوص والتحكم)
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
-            height: 280,
+            height: 140,
             child: IgnorePointer(
               child: Container(
                 decoration: BoxDecoration(
@@ -1036,87 +863,166 @@ class _ReelItemCardState extends State<_ReelItemCard>
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
                     colors: [
-                      Colors.black.withValues(alpha: 0.88),
-                      Colors.black.withValues(alpha: 0.40),
+                      Colors.black,
+                      Colors.black,
+                      Colors.black.withValues(alpha: 0.95),
+                      Colors.black.withValues(alpha: 0.70),
+                      Colors.black.withValues(alpha: 0.30),
                       Colors.transparent,
                     ],
+                    stops: const [0.0, 0.28, 0.45, 0.65, 0.85, 1.0],
                   ),
                 ),
               ),
             ),
           ),
 
-          // Action Rail (Heart, Comments, Share) - Lowered to bottom area
+          // Action Rail (Heart, Comments, Share) - Positioned on the RIGHT over YouTube's buttons
           Positioned(
-            bottom: contentBottom,
-            left: 14,
-            child: Obx(() {
-              final isLiked =
-                  widget.controller.isLiked[widget.banner.id] ?? false;
-              final likesCount =
-                  widget.controller.likesCount[widget.banner.id] ?? 0;
-              final commentsCount =
-                  widget.controller.commentsCount[widget.banner.id] ?? 0;
-
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Like Button with count
-                  _buildRailButton(
-                    icon: isLiked
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    iconColor: isLiked ? const Color(0xFFEF4444) : Colors.white,
-                    label: '$likesCount',
-                    onTap: () => widget.controller.toggleLike(widget.banner.id),
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Comments Button with count
-                  _buildRailButton(
-                    icon: IconsaxPlusBold.messages_2,
-                    iconColor: Colors.white,
-                    label: '$commentsCount',
-                    onTap: () {
-                      ReelsCommentsSheet.show(
-                        context,
-                        widget.banner.id,
-                        onCommentAdded: () =>
-                            widget.controller.onCommentAdded(widget.banner.id),
-                        onCommentDeleted: () => widget.controller
-                            .onCommentDeleted(widget.banner.id),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Share Button
-                  _buildRailButton(
-                    icon: Icons.share_rounded,
-                    iconColor: Colors.white,
-                    label: 'مشاركة',
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      final title =
-                          widget.banner.titleAr ??
-                          'عرض مميز من علي لقطع الغيار';
-                      final link = widget.banner.link?.trim() ?? '';
-                      final shareText = link.isNotEmpty
-                          ? '$title\n$link\n\nتطبيق علي لقطع الغيار'
-                          : '$title\n\nتطبيق علي لقطع الغيار';
-                      Share.share(shareText, subject: title);
-                    },
+            bottom: contentBottom + 8,
+            right: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.78),
+                borderRadius: BorderRadius.circular(32),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  width: 1.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    blurRadius: 14,
+                    spreadRadius: 2,
                   ),
                 ],
+              ),
+              child: Obx(() {
+                final isLiked =
+                    widget.controller.isLiked[widget.banner.id] ?? false;
+                final likesCount =
+                    widget.controller.likesCount[widget.banner.id] ?? 0;
+                final commentsCount =
+                    widget.controller.commentsCount[widget.banner.id] ?? 0;
+
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Like Button with count
+                    _buildRailButton(
+                      icon: isLiked
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                      iconColor: isLiked
+                          ? const Color(0xFFEF4444)
+                          : Colors.white,
+                      label: _formatCount(likesCount),
+                      onTap: () =>
+                          widget.controller.toggleLike(widget.banner.id),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Comments Button with count
+                    _buildRailButton(
+                      icon: IconsaxPlusBold.messages_2,
+                      iconColor: Colors.white,
+                      label: _formatCount(commentsCount),
+                      onTap: () {
+                        ReelsCommentsSheet.show(
+                          context,
+                          widget.banner.id,
+                          onCommentAdded: () => widget.controller
+                              .onCommentAdded(widget.banner.id),
+                          onCommentDeleted: () => widget.controller
+                              .onCommentDeleted(widget.banner.id),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Share Button with Deeplink
+                    _buildRailButton(
+                      icon: Icons.share_rounded,
+                      iconColor: Colors.white,
+                      label: 'مشاركة',
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        final title =
+                            widget.banner.titleAr?.trim().isNotEmpty == true
+                            ? widget.banner.titleAr!.trim()
+                            : 'عرض مميز من علي لقطع الغيار';
+                        final deepLink =
+                            'https://maktabali.com/reels?id=${widget.banner.id}';
+                        final shareText =
+                            '$title\n\nشاهد العرض عبر تطبيق علي لقطع الغيار:\n$deepLink';
+                        Share.share(shareText, subject: title);
+                      },
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ),
+
+          // Views Counter Badge - Positioned on the LEFT
+          Positioned(
+            bottom: contentBottom + 18,
+            left: 14,
+            child: Obx(() {
+              final viewsCount =
+                  widget.controller.viewsCount[widget.banner.id] ??
+                  widget.banner.totalViews;
+
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    width: 1.0,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      IconsaxPlusBold.eye,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _formatCount(viewsCount),
+                      style: GoogleFonts.cairo(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
               );
             }),
           ),
 
-          // Bottom Caption (Title, Subtitle, Shop Button) - Lowered to align with action rail
+          // Bottom Caption (Title, Subtitle, Shop Button) - Positioned on the right side
           Positioned(
             bottom: contentBottom,
-            right: 18,
-            left: 72,
+            right: 82,
+            left: 95,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -1233,7 +1139,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
 
           // Interactive Progress / Seek Bar (تقديم وتأخير) - Lowered right to the bottom edge
           if (_hasVideo &&
-              (_isVideoInitialized || _isYouTubeReady) &&
+              (_isVideoInitialized || _isYouTubeInitialized) &&
               _totalDuration > Duration.zero)
             Positioned(
               left: 0,
@@ -1269,7 +1175,8 @@ class _ReelItemCardState extends State<_ReelItemCard>
                           onTapUp: (_) => _endScrubbing(),
                           onTapCancel: () => _endScrubbing(),
                           child: Container(
-                            height: 28, // Generous touch target for easy seeking
+                            height:
+                                28, // Generous touch target for easy seeking
                             color: Colors.transparent,
                             alignment: Alignment.bottomCenter,
                             child: Stack(
@@ -1356,33 +1263,71 @@ class _ReelItemCardState extends State<_ReelItemCard>
   }
 
   Widget _buildYouTubeLayer() {
-    return Container(
-      color: Colors.black,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Pure black background - clean and seamless
-          const ColoredBox(color: Colors.black),
+    if (_isYouTubeInitialized && _ytCtrl != null) {
+      final size = MediaQuery.of(context).size;
+      final isShort =
+          widget.banner.videoUrl?.toLowerCase().contains('shorts') == true;
+      final double aspect = isShort && size.height > 0
+          ? (size.width / size.height)
+          : (16 / 9);
 
-          // WebView running YouTube HTML5 player
-          if (_webCtrl != null)
-            IgnorePointer(
-              child: WebViewWidget(controller: _webCtrl!),
-            ),
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: YoutubePlayer(
+          key: ValueKey('yt_${widget.banner.id}_${_youTubeId ?? ""}'),
+          controller: _ytCtrl!,
+          aspectRatio: aspect,
+          showVideoProgressIndicator: false,
+          onReady: () {
+            if (_isActive && !_userPaused) {
+              _pendingPlay = false;
+              _ytCtrl?.play();
+            }
+          },
+          onEnded: (_) {
+            _ytCtrl?.seekTo(Duration.zero);
+            _ytCtrl?.play();
+          },
+        ),
+      );
+    }
 
-          // Black overlay layer ONLY at the beginning before video starts playing - hides default YouTube image!
-          if (!_hasStartedPlaying)
-            const Positioned.fill(
-              child: ColoredBox(color: Colors.black),
-            ),
+    return _buildThumbnailPlaceholder();
+  }
 
-          // Loading spinner if user tapped play but video has not started rendering yet
-          if (!_hasStartedPlaying && _isPlaying)
-            const Center(
+  Widget _buildThumbnailPlaceholder() {
+    final videoId = _youTubeId;
+    final thumbUrl = widget.banner.imageUrl.isNotEmpty
+        ? widget.banner.imageUrl
+        : (videoId != null ? YoutubePlayer.getThumbnail(videoId: videoId) : '');
+
+    if (thumbUrl.isEmpty) {
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: CircularProgressIndicator(color: AppColors.gold),
+        ),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        CachedNetworkImage(
+          imageUrl: thumbUrl,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(
+            color: Colors.black,
+            child: const Center(
               child: CircularProgressIndicator(color: AppColors.gold),
             ),
-        ],
-      ),
+          ),
+          errorWidget: (_, __, ___) => Container(color: Colors.black),
+        ),
+        if (_isActive)
+          const Center(child: CircularProgressIndicator(color: AppColors.gold)),
+      ],
     );
   }
 

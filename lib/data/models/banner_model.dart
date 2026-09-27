@@ -7,6 +7,9 @@ class BannerModel {
   final String? link;
   final String? expiresAt;
   final bool isActive;
+  final int viewsCount;
+  final int manualViewsCount;
+  final int manualLikesCount;
 
   BannerModel({
     required this.id,
@@ -17,7 +20,13 @@ class BannerModel {
     this.link,
     this.expiresAt,
     this.isActive = true,
+    this.viewsCount = 0,
+    this.manualViewsCount = 0,
+    this.manualLikesCount = 0,
   });
+
+  int get totalViews => viewsCount + manualViewsCount;
+  int get totalManualLikes => manualLikesCount;
 
   factory BannerModel.fromJson(Map<String, dynamic> json) {
     return BannerModel(
@@ -29,6 +38,9 @@ class BannerModel {
       link: json['link'] as String?,
       expiresAt: json['expires_at'] as String?,
       isActive: json['is_active'] as bool? ?? true,
+      viewsCount: (json['views_count'] as num?)?.toInt() ?? 0,
+      manualViewsCount: (json['manual_views_count'] as num?)?.toInt() ?? 0,
+      manualLikesCount: (json['manual_likes_count'] as num?)?.toInt() ?? 0,
     );
   }
 
