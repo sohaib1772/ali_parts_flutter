@@ -18,6 +18,7 @@ import 'cart_service.dart';
 import 'favorites_service.dart';
 import 'notification_service.dart';
 import 'secure_storage_service.dart';
+import 'storage_service.dart';
 
 class AuthService extends GetxService {
   late final SecureStorageService _secureStorage;
@@ -45,6 +46,8 @@ class AuthService extends GetxService {
   String? _lastHandledDeepLink;
   DateTime? _lastDeepLinkTime;
   bool _isNavigatingToReels = false;
+  Completer<bool>? _refreshCompleter;
+  static const String _keyCachedProfile = 'cached_user_profile';
 
   bool get _isNavigatorReady {
     try {
@@ -165,7 +168,8 @@ class AuthService extends GetxService {
           return;
         }
         try {
-          if (Get.currentRoute == AppRoutes.reels) {
+          final isAlreadyOnReels = Get.currentRoute.startsWith(AppRoutes.reels);
+          if (isAlreadyOnReels) {
             _isNavigatingToReels = false;
             if (bannerId != null && bannerId.isNotEmpty && Get.isRegistered<ReelsController>()) {
               final reelsCtrl = Get.find<ReelsController>();
@@ -178,10 +182,14 @@ class AuthService extends GetxService {
               }
             }
           } else {
+            // Dismiss open overlays if any to ensure clean navigation
+            if (Get.isDialogOpen == true) Get.back();
+            if (Get.isBottomSheetOpen == true) Get.back();
+
             if (bannerId != null && bannerId.isNotEmpty) {
-              Get.toNamed(AppRoutes.reels, arguments: {'targetBannerId': bannerId});
+              Get.toNamed(AppRoutes.reels, arguments: {'targetBannerId': bannerId}, preventDuplicates: true);
             } else {
-              Get.toNamed(AppRoutes.reels);
+              Get.toNamed(AppRoutes.reels, preventDuplicates: true);
             }
             Future.delayed(const Duration(milliseconds: 1000), () {
               _isNavigatingToReels = false;
@@ -276,39 +284,90 @@ class AuthService extends GetxService {
   Future<void> _restoreSession() async {
     try {
       final accessToken = await _secureStorage.read(AppConstants.secureKeyAccessToken);
+      final refreshToken = await _secureStorage.read(AppConstants.secureKeyRefreshToken);
       final userId = await _secureStorage.read(AppConstants.secureKeyUserId);
 
-      if (accessToken != null && accessToken.isNotEmpty && userId != null) {
-        final response = await _authDio.get(
-          '/auth/v1/user',
-          options: Options(
-            headers: {'Authorization': 'Bearer $accessToken'},
-            validateStatus: (status) => status != null && status < 500,
-          ),
-        );
+      // 1. Instant offline-first session restoration!
+      if (userId != null && userId.isNotEmpty && (accessToken != null || refreshToken != null)) {
+        isLoggedIn.value = true;
+        _restoreCachedProfile(userId);
+        AppLogger.d('Instant session restored locally for user ID: $userId');
+      } else {
+        AppLogger.d('No saved session credentials found.');
+        return;
+      }
 
-        if (response.statusCode == 200 && response.data != null) {
-          _setUserFromAuthResponse(response.data as Map<String, dynamic>);
-          isLoggedIn.value = true;
-          AppLogger.d('Session restored for user: ${userEmail.value}');
-          await fetchUserProfile();
-          syncServices();
-        } else {
-          AppLogger.d('Stored session expired or invalid (${response.statusCode}), attempting refresh...');
-          await _tryRefreshToken();
+      // 2. Background verification & refresh (never logs out on network error/offline)
+      if (accessToken != null && accessToken.isNotEmpty) {
+        try {
+          final response = await _authDio.get(
+            '/auth/v1/user',
+            options: Options(
+              headers: {'Authorization': 'Bearer $accessToken'},
+              validateStatus: (status) => status != null && status < 500,
+            ),
+          );
+
+          if (response.statusCode == 200 && response.data != null) {
+            _setUserFromAuthResponse(response.data as Map<String, dynamic>);
+            isLoggedIn.value = true;
+            AppLogger.d('Session verified online for user: ${userEmail.value}');
+            await fetchUserProfile();
+            syncServices();
+            return;
+          } else if (response.statusCode == 401) {
+            AppLogger.d('Stored access token expired (401), attempting token refresh...');
+            await _tryRefreshToken();
+            return;
+          }
+        } on DioException catch (e) {
+          AppLogger.w('Network error during session verify ($e). Retaining offline login.');
+          return;
+        } catch (e) {
+          AppLogger.w('Non-network error during session verify: $e');
         }
       }
+
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await _tryRefreshToken();
+      }
     } catch (e) {
-      AppLogger.d('Failed to restore session: $e');
-      await _tryRefreshToken();
+      AppLogger.w('Failed to restore session gracefully: $e');
+      // NEVER clear session here; keep user logged in.
     }
   }
 
   Future<bool> _tryRefreshToken() async {
+    // If a refresh is already in-flight, await the ongoing refresh to avoid token rotation race conditions!
+    if (_refreshCompleter != null && !_refreshCompleter!.isCompleted) {
+      AppLogger.d('Token refresh already in progress, awaiting existing refresh...');
+      return await _refreshCompleter!.future;
+    }
+
+    _refreshCompleter = Completer<bool>();
+
+    try {
+      final success = await _executeTokenRefresh();
+      if (!_refreshCompleter!.isCompleted) {
+        _refreshCompleter!.complete(success);
+      }
+      return success;
+    } catch (e) {
+      AppLogger.w('Unexpected error during token refresh: $e');
+      if (!_refreshCompleter!.isCompleted) {
+        _refreshCompleter!.complete(false);
+      }
+      return false;
+    } finally {
+      _refreshCompleter = null;
+    }
+  }
+
+  Future<bool> _executeTokenRefresh() async {
     try {
       final refreshToken = await _secureStorage.read(AppConstants.secureKeyRefreshToken);
       if (refreshToken == null || refreshToken.isEmpty) {
-        await _clearSession();
+        AppLogger.w('No refresh token available to refresh session.');
         return false;
       }
 
@@ -322,21 +381,42 @@ class AuthService extends GetxService {
 
       if (response.statusCode == 200 && response.data != null) {
         await _saveSession(response.data as Map<String, dynamic>);
-        // Update Realtime auth with new token
         final newToken = await _secureStorage.read(AppConstants.secureKeyAccessToken);
         if (newToken != null && Get.isRegistered<NotificationService>()) {
           Get.find<NotificationService>().updateRealtimeAuth(newToken);
         }
+        AppLogger.d('Token refreshed successfully.');
         return true;
-      } else {
-        AppLogger.d('Refresh token rejected (${response.statusCode}), clearing session.');
-        await _clearSession();
       }
+
+      // Check if server explicitly rejected the refresh token:
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        final data = response.data;
+        final error = data is Map ? data['error'] : null;
+        final errorDesc = (data is Map ? (data['error_description'] ?? '') : '').toString().toLowerCase();
+        AppLogger.w('Refresh token rejected (${response.statusCode}): $error - $errorDesc');
+
+        // Only clear session if user is not found or token was permanently revoked.
+        // If it was "Already Used" in a race condition, do NOT destroy session!
+        if (error == 'invalid_grant' && (errorDesc.contains('not found') || errorDesc.contains('user not found'))) {
+          AppLogger.w('User not found or refresh token permanently invalid; clearing session.');
+          await _clearSession();
+        }
+        return false;
+      }
+
+      // Server 5xx: DO NOT clear session!
+      AppLogger.w('Server returned ${response.statusCode} during token refresh; keeping session intact.');
+      return false;
+    } on DioException catch (e) {
+      // Network timeout, connection error, DNS failure, offline:
+      // NEVER CLEAR SESSION ON NETWORK ISSUES!
+      AppLogger.w('Network error during token refresh (${e.type}); keeping session intact.');
+      return false;
     } catch (e) {
-      AppLogger.d('Token refresh failed: $e');
-      await _clearSession();
+      AppLogger.w('Token refresh failed: $e; keeping session intact.');
+      return false;
     }
-    return false;
   }
 
   Future<Map<String, dynamic>> signInWithGoogle() async {
@@ -570,6 +650,18 @@ class AuthService extends GetxService {
         isStaff: isStaff.value,
         staffPermissions: staffPermissions.value,
       );
+
+      _cacheUserProfile({
+        'user_id': userId,
+        'email': userEmail.value,
+        'full_name': userName.value,
+        'phone': userPhone.value,
+        'avatar_url': userAvatar.value,
+        'points_balance': pointsBalance.value,
+        'is_admin': isAdmin.value,
+        'is_staff': isStaff.value,
+        'staff_permissions': staffPermissions.value,
+      });
     } catch (e) {
       AppLogger.e('Error fetching user profile', e);
     }
@@ -650,7 +742,7 @@ class AuthService extends GetxService {
       final accessToken = await _secureStorage.read(AppConstants.secureKeyAccessToken);
       if (accessToken != null && accessToken.isNotEmpty) {
         await _authDio.post(
-          '/auth/v1/logout',
+          '/auth/v1/logout?scope=local',
           options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
         );
       }
@@ -666,6 +758,7 @@ class AuthService extends GetxService {
     }
 
     await _secureStorage.deleteAll();
+    _clearCachedProfile();
     isLoggedIn.value = false;
     currentUser.value = null;
     userEmail.value = '';
@@ -683,6 +776,60 @@ class AuthService extends GetxService {
     if (Get.isRegistered<FavoritesService>()) {
       Get.find<FavoritesService>().clearLocalCache();
     }
+  }
+
+  void _cacheUserProfile(Map<String, dynamic> profile) {
+    try {
+      if (Get.isRegistered<StorageService>()) {
+        Get.find<StorageService>().write(_keyCachedProfile, profile);
+      }
+    } catch (_) {}
+  }
+
+  void _restoreCachedProfile(String userId) {
+    try {
+      if (Get.isRegistered<StorageService>()) {
+        final data = Get.find<StorageService>().read<Map>(_keyCachedProfile);
+        if (data != null) {
+          final profile = Map<String, dynamic>.from(data);
+          final fn = profile['full_name'] as String? ?? '';
+          final ph = profile['phone'] as String? ?? '';
+          final av = profile['avatar_url'] as String? ?? '';
+          final em = profile['email'] as String? ?? '';
+          final pts = profile['points_balance'] as int? ?? 0;
+          final adm = profile['is_admin'] as bool? ?? false;
+          final stf = profile['is_staff'] as bool? ?? false;
+
+          if (fn.isNotEmpty) userName.value = fn;
+          if (ph.isNotEmpty) userPhone.value = ph;
+          if (av.isNotEmpty) userAvatar.value = av;
+          if (em.isNotEmpty) userEmail.value = em;
+          pointsBalance.value = pts;
+          isAdmin.value = adm;
+          isStaff.value = stf;
+          if (profile['staff_permissions'] is Map) {
+            staffPermissions.value = Map<String, dynamic>.from(profile['staff_permissions'] as Map);
+          }
+
+          currentUser.value = UserModel(
+            id: userId,
+            fullName: userName.value.isNotEmpty ? userName.value : null,
+            avatarUrl: userAvatar.value.isNotEmpty ? userAvatar.value : null,
+            phone: userPhone.value.isNotEmpty ? userPhone.value : null,
+            pointsBalance: pointsBalance.value,
+            isAdmin: isAdmin.value,
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _clearCachedProfile() {
+    try {
+      if (Get.isRegistered<StorageService>()) {
+        Get.find<StorageService>().remove(_keyCachedProfile);
+      }
+    } catch (_) {}
   }
 
   Future<String?> getAccessToken() async {

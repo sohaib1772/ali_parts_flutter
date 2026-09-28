@@ -10,6 +10,8 @@ class ProductModel {
   final double? shippingIqd;
   final bool mergeDelivery;
   final String? deliveryGroup;
+  final List<String> mergeWithGroups;
+  final int? maxMergeQty;
   final String? categoryId;
   final String? brandId;
   final List<String> compatibleModels;
@@ -39,6 +41,8 @@ class ProductModel {
     this.shippingIqd,
     this.mergeDelivery = true,
     this.deliveryGroup,
+    this.mergeWithGroups = const [],
+    this.maxMergeQty,
     this.categoryId,
     this.brandId,
     this.compatibleModels = const [],
@@ -86,6 +90,13 @@ class ProductModel {
       shippingIqd: (json['shipping_iqd'] as num?)?.toDouble(),
       mergeDelivery: json['merge_delivery'] as bool? ?? true,
       deliveryGroup: json['delivery_group'] as String?,
+      mergeWithGroups: parseStringList(
+        json['merge_with_groups'] ?? (json['specs'] is Map ? json['specs']['merge_with_groups'] : null),
+      ),
+      maxMergeQty: (json['max_merge_qty'] as num?)?.toInt() ??
+          ((json['specs'] is Map && json['specs']['max_merge_qty'] != null)
+              ? (json['specs']['max_merge_qty'] as num?)?.toInt()
+              : null),
       categoryId: json['category_id'] as String?,
       brandId: json['brand_id'] as String?,
       compatibleModels: parseStringList(json['compatible_models']),
@@ -117,6 +128,8 @@ class ProductModel {
     'shipping_iqd': shippingIqd,
     'merge_delivery': mergeDelivery,
     'delivery_group': deliveryGroup,
+    'merge_with_groups': mergeWithGroups,
+    'max_merge_qty': maxMergeQty,
     'category_id': categoryId,
     'brand_id': brandId,
     'compatible_models': compatibleModels,

@@ -31,6 +31,117 @@ import '../../../data/repositories/product_repository.dart';
 import '../../home/controllers/home_controller.dart';
 import '../../reels/controllers/reels_controller.dart';
 
+class _AdminProductsPaginationSentinel extends StatefulWidget {
+  final VoidCallback onLoadMore;
+  final bool isLoading;
+  final bool hasError;
+  final VoidCallback onRetry;
+
+  const _AdminProductsPaginationSentinel({
+    required this.onLoadMore,
+    required this.isLoading,
+    required this.hasError,
+    required this.onRetry,
+  });
+
+  @override
+  State<_AdminProductsPaginationSentinel> createState() => _AdminProductsPaginationSentinelState();
+}
+
+class _AdminProductsPaginationSentinelState extends State<_AdminProductsPaginationSentinel> {
+  @override
+  void initState() {
+    super.initState();
+    _triggerIfNeeded();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdminProductsPaginationSentinel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isLoading && !widget.hasError) {
+      _triggerIfNeeded();
+    }
+  }
+
+  void _triggerIfNeeded() {
+    if (!widget.isLoading && !widget.hasError) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !widget.isLoading && !widget.hasError) {
+          widget.onLoadMore();
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.hasError) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: OutlinedButton.icon(
+          onPressed: widget.onRetry,
+          icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFFE11D48)),
+          label: const Text(
+            'حدث خطأ أثناء تحميل المزيد - إضغط لإعادة المحاولة',
+            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFFE11D48)),
+          ),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: Color(0xFFFECDD3)),
+            backgroundColor: const Color(0xFFFFF1F2),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Center(
+        child: InkWell(
+          onTap: widget.isLoading ? null : widget.onLoadMore,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFCBD5E1)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  widget.isLoading ? 'جاري تحميل المزيد من المنتجات...' : 'تحميل المزيد من المنتجات...',
+                  style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class AdminView extends StatefulWidget {
   const AdminView({super.key});
 
@@ -50,7 +161,7 @@ class _AdminViewState extends State<AdminView> {
   bool _isLoadingProducts = true;
   bool _isLoadingMoreProducts = false;
   bool _hasMoreProducts = true;
-  int _productsPage = 0;
+  bool _loadMoreProductsError = false;
   static const int _productsPageSize = 40;
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _searchDebounceTimer;
@@ -273,10 +384,54 @@ class _AdminViewState extends State<AdminView> {
         !_isLoadingProducts &&
         !_isLoadingMoreProducts &&
         _hasMoreProducts &&
-        _scrollController.hasClients &&
-        _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 400) {
-      _loadMoreProducts();
+        _scrollController.hasClients) {
+      final pos = _scrollController.position;
+      if (pos.maxScrollExtent > 0 && pos.pixels >= pos.maxScrollExtent - 650) {
+        _loadMoreProducts();
+      }
     }
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollMetricsNotification) {
+      return false;
+    }
+
+    if (_selectedTab != 0 ||
+        _isLoadingProducts ||
+        _isLoadingMoreProducts ||
+        !_hasMoreProducts) {
+      return false;
+    }
+
+    final m = notification.metrics;
+    if (m.axis != Axis.vertical || m.maxScrollExtent <= 0) {
+      return false;
+    }
+
+    // 1. Actively dragging or momentum scrolling downwards
+    if (notification is ScrollUpdateNotification) {
+      final delta = notification.scrollDelta;
+      if (delta != null && delta > 0) {
+        if (m.pixels >= m.maxScrollExtent - 650 && m.pixels > 100) {
+          _loadMoreProducts();
+        }
+      }
+    }
+    // 2. iOS Bouncing physics or overscroll at the bottom
+    else if (notification is OverscrollNotification) {
+      if (notification.overscroll > 0 && m.pixels > 100) {
+        _loadMoreProducts();
+      }
+    }
+    // 3. User released finger or fling momentum ended near bottom
+    else if (notification is ScrollEndNotification) {
+      if (m.pixels >= m.maxScrollExtent - 650 && m.pixels > 100) {
+        _loadMoreProducts();
+      }
+    }
+
+    return false;
   }
 
   @override
@@ -379,20 +534,23 @@ class _AdminViewState extends State<AdminView> {
 
   Future<void> _loadProducts({String? query, bool isRefresh = true}) async {
     if (isRefresh) {
-      _productsPage = 0;
       _hasMoreProducts = true;
+      _loadMoreProductsError = false;
       if (query != null) {
         _currentProductSearchQuery = query.trim();
       }
       setState(() => _isLoadingProducts = true);
     } else {
       if (_isLoadingMoreProducts || !_hasMoreProducts) return;
-      setState(() => _isLoadingMoreProducts = true);
+      setState(() {
+        _isLoadingMoreProducts = true;
+        _loadMoreProductsError = false;
+      });
     }
 
     try {
       final dio = Get.find<DioClient>().dio;
-      final offset = _productsPage * _productsPageSize;
+      final offset = isRefresh ? 0 : _products.length;
       final qParams = <String, dynamic>{
         'select': '*',
         'order': 'created_at.desc',
@@ -436,15 +594,24 @@ class _AdminViewState extends State<AdminView> {
             if (isRefresh) {
               _products = prods;
             } else {
-              _products.addAll(prods);
+              final existingIds = _products.map((p) => p.id).toSet();
+              for (final p in prods) {
+                if (!existingIds.contains(p.id)) {
+                  _products.add(p);
+                  existingIds.add(p.id);
+                }
+              }
             }
             _totalProducts = count;
-            _hasMoreProducts = prods.length >= _productsPageSize;
-            if (prods.isNotEmpty) {
-              _productsPage++;
+            final currentCount = _products.length;
+            if (count > 0) {
+              _hasMoreProducts = currentCount < count && prods.isNotEmpty;
+            } else {
+              _hasMoreProducts = prods.length >= _productsPageSize;
             }
             _isLoadingProducts = false;
             _isLoadingMoreProducts = false;
+            _loadMoreProductsError = false;
           });
         }
         return;
@@ -455,6 +622,9 @@ class _AdminViewState extends State<AdminView> {
       setState(() {
         _isLoadingProducts = false;
         _isLoadingMoreProducts = false;
+        if (!isRefresh) {
+          _loadMoreProductsError = true;
+        }
       });
     }
   }
@@ -470,8 +640,10 @@ class _AdminViewState extends State<AdminView> {
     });
   }
 
-  Future<void> _loadOrders() async {
-    setState(() => _isLoadingOrders = true);
+  Future<void> _loadOrders({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _isLoadingOrders = true);
+    }
     try {
       final dio = Get.find<DioClient>().dio;
       final res = await dio.get(
@@ -2471,6 +2643,35 @@ class _AdminViewState extends State<AdminView> {
     );
   }
 
+  Future<void> _handleRefresh() async {
+    switch (_selectedTab) {
+      case 1:
+        await _loadOrders(silent: true);
+        break;
+      case 0:
+        await _loadProducts(isRefresh: true);
+        break;
+      case 3:
+        await _loadBanners();
+        break;
+      case 4:
+        await _loadStockMovements();
+        break;
+      case 5:
+        await _loadBlockData();
+        break;
+      case 6:
+        await _loadUsers();
+        break;
+      case 7:
+        await _loadReplacements();
+        break;
+      default:
+        await _loadMetadata();
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -2495,15 +2696,22 @@ class _AdminViewState extends State<AdminView> {
                   showBack: true,
                 ),
 
-                // Single outer scrollable ListView for the whole page!
+                // Single outer scrollable ListView for the whole page with Pull-to-Refresh!
                 Expanded(
                   child: Stack(
                     children: [
-                      ListView(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(0, 10, 0, 90),
-                        children: [
-                          // 1. Subheader Accordion: صلاحياتي
+                      RefreshIndicator(
+                        color: AppColors.gold,
+                        backgroundColor: Colors.white,
+                        onRefresh: _handleRefresh,
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: _handleScrollNotification,
+                          child: ListView(
+                            controller: _scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                            padding: const EdgeInsets.fromLTRB(0, 10, 0, 90),
+                            children: [
+                            // 1. Subheader Accordion: صلاحياتي
                           Builder(builder: (context) {
                             final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
                             final isCurrentAdmin = auth?.isAdmin.value == true;
@@ -2746,8 +2954,10 @@ class _AdminViewState extends State<AdminView> {
                           _buildActiveTabContent(),
 
                           const SizedBox(height: 30),
-                  ],
-                ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Floating Glass Scroll To Top Button
                 GlassScrollToTopButton(
@@ -3909,7 +4119,7 @@ class _AdminViewState extends State<AdminView> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'منتج $_totalProducts',
+                '${_totalProducts > 0 ? _totalProducts : _products.length} منتج',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
               ),
               ElevatedButton.icon(
@@ -4082,49 +4292,20 @@ class _AdminViewState extends State<AdminView> {
               );
             },
           ),
-        if (_isLoadingMoreProducts)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
-                  ),
-                  SizedBox(width: 10),
-                  Text(
-                    'جاري تحميل المزيد من المنتجات...',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontFamily: 'Cairo'),
-                  ),
-                ],
-              ),
-            ),
+        if (_hasMoreProducts && _products.isNotEmpty)
+          _AdminProductsPaginationSentinel(
+            isLoading: _isLoadingMoreProducts,
+            hasError: _loadMoreProductsError,
+            onLoadMore: _loadMoreProducts,
+            onRetry: _loadMoreProducts,
           )
-        else if (_hasMoreProducts && _products.isNotEmpty)
+        else if (!_hasMoreProducts && _products.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: OutlinedButton.icon(
-              onPressed: _loadMoreProducts,
-              icon: const Icon(Icons.arrow_downward_rounded, size: 16),
-              label: const Text('تحميل المزيد من المنتجات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 13)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF0A192F),
-                side: const BorderSide(color: Color(0xFFCBD5E1)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-            ),
-          )
-        else if (!_hasMoreProducts && _products.length >= _productsPageSize)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
+            padding: const EdgeInsets.symmetric(vertical: 16),
             child: Center(
               child: Text(
-                'تم عرض جميع المنتجات ✓',
-                style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+                'تم عرض جميع المنتجات ✓ (${_totalProducts > 0 ? _totalProducts : _products.length} منتج)',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
               ),
             ),
           ),
@@ -4259,6 +4440,52 @@ class _AdminViewState extends State<AdminView> {
                               'الطلبات المأرشفة ($_archivedOrdersCount)',
                               style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
                             ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () async {
+                      await _loadOrders(silent: true);
+                      Get.snackbar(
+                        'تم التحديث',
+                        'تم تحديث قائمة الطلبات بنجاح',
+                        snackPosition: SnackPosition.BOTTOM,
+                        duration: const Duration(seconds: 2),
+                        backgroundColor: const Color(0xFF0F172A),
+                        colorText: Colors.white,
+                        margin: const EdgeInsets.all(12),
+                        borderRadius: 12,
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.03),
+                            blurRadius: 3,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF0F172A)),
+                          SizedBox(width: 4),
+                          Text(
+                            'تحديث',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
                           ),
                         ],
                       ),
@@ -4572,6 +4799,23 @@ class _AdminViewState extends State<AdminView> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _loadOrders(),
+                      icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFF0F172A)),
+                      label: const Text(
+                        'تحديث الطلبات',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        side: const BorderSide(color: Color(0xFFCBD5E1)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -4579,7 +4823,17 @@ class _AdminViewState extends State<AdminView> {
             Container(
               padding: const EdgeInsets.symmetric(vertical: 40),
               alignment: Alignment.center,
-              child: const Text('لا توجد طلبات تطابق هذا الفلتر', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+              child: Column(
+                children: [
+                  const Text('لا توجد طلبات تطابق هذا الفلتر', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: () => _loadOrders(),
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('تحديث القائمة'),
+                  ),
+                ],
+              ),
             )
           else
             ...filtered.map((o) => _buildOrderAdminCard(o)),
@@ -10083,10 +10337,12 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   late final TextEditingController _priceUsdCtrl;
   late final TextEditingController _comparePriceIqdCtrl;
   late final TextEditingController _shippingIqdCtrl;
-  late final TextEditingController _deliveryGroupCtrl;
   late final TextEditingController _stockCountCtrl;
+  late final TextEditingController _maxMergeQtyCtrl;
 
   bool _mergeDelivery = true;
+  String _selectedDeliveryGroup = 'small';
+  final List<String> _mergeWithGroups = [];
   final List<String> _selectedCategoryIds = [];
   final List<String> _selectedBrandIds = [];
   final List<String> _selectedCompatibleModels = [];
@@ -10128,8 +10384,58 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _shippingIqdCtrl = TextEditingController(
       text: p?.shippingIqd != null ? p!.shippingIqd!.toInt().toString() : '0',
     );
-    _deliveryGroupCtrl = TextEditingController();
     _stockCountCtrl = TextEditingController(text: p?.stockQty.toString() ?? '1');
+
+    final int? pMaxMerge = p?.maxMergeQty ??
+        ((p?.specs != null && p!.specs!['max_merge_qty'] != null)
+            ? int.tryParse(p.specs!['max_merge_qty'].toString())
+            : null);
+    _maxMergeQtyCtrl = TextEditingController(
+      text: pMaxMerge != null && pMaxMerge > 0 ? pMaxMerge.toString() : '',
+    );
+
+    if (p != null) {
+      final rawGroup = (p.deliveryGroup ?? '').toLowerCase().trim();
+      if (rawGroup.contains('large') || rawGroup.contains('كبير')) {
+        _selectedDeliveryGroup = 'large';
+      } else if (rawGroup.contains('medium') || rawGroup.contains('متوسط')) {
+        _selectedDeliveryGroup = 'medium';
+      } else if (rawGroup.contains('small') || rawGroup.contains('صغير')) {
+        _selectedDeliveryGroup = 'small';
+      } else if (rawGroup.isNotEmpty) {
+        _selectedDeliveryGroup = 'small';
+      } else {
+        _selectedDeliveryGroup = '';
+      }
+
+      _mergeWithGroups.clear();
+      if (p.mergeWithGroups.isNotEmpty) {
+        for (final g in p.mergeWithGroups) {
+          final s = g.toLowerCase();
+          if (s.contains('large') || s.contains('كبير')) {
+            if (!_mergeWithGroups.contains('large')) _mergeWithGroups.add('large');
+          } else if (s.contains('medium') || s.contains('متوسط')) {
+            if (!_mergeWithGroups.contains('medium')) _mergeWithGroups.add('medium');
+          } else {
+            if (!_mergeWithGroups.contains('small')) _mergeWithGroups.add('small');
+          }
+        }
+      } else if (p.mergeDelivery) {
+        if (_selectedDeliveryGroup == 'large') {
+          // Large items never merge
+        } else if (_selectedDeliveryGroup == 'medium') {
+          _mergeWithGroups.addAll(['medium', 'large']);
+        } else {
+          _mergeWithGroups.addAll(['small', 'medium', 'large']);
+        }
+      }
+      _mergeDelivery = p.mergeDelivery;
+    } else {
+      _selectedDeliveryGroup = 'small';
+      _mergeWithGroups.clear();
+      _mergeWithGroups.addAll(['small', 'medium', 'large']);
+      _mergeDelivery = true;
+    }
 
     if (p != null) {
       final pSpecs = p.specs ?? {};
@@ -10178,8 +10484,8 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _priceUsdCtrl.dispose();
     _comparePriceIqdCtrl.dispose();
     _shippingIqdCtrl.dispose();
-    _deliveryGroupCtrl.dispose();
     _stockCountCtrl.dispose();
+    _maxMergeQtyCtrl.dispose();
     super.dispose();
   }
 
@@ -10289,13 +10595,21 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
           'compare_price_iqd': double.tryParse(_comparePriceIqdCtrl.text.trim()),
         'shipping_iqd': double.tryParse(_shippingIqdCtrl.text.trim()) ?? 0,
         'merge_delivery': _mergeDelivery,
-        if (_deliveryGroupCtrl.text.trim().isNotEmpty) 'delivery_group': _deliveryGroupCtrl.text.trim(),
+        'delivery_group': _selectedDeliveryGroup.isNotEmpty ? _selectedDeliveryGroup : null,
+        'merge_with_groups': _mergeWithGroups,
+        'max_merge_qty': int.tryParse(_maxMergeQtyCtrl.text.trim()) != null && int.tryParse(_maxMergeQtyCtrl.text.trim())! > 0
+            ? int.tryParse(_maxMergeQtyCtrl.text.trim())
+            : null,
         'category_id': _selectedCategoryIds.isNotEmpty ? _selectedCategoryIds.first : null,
         'brand_id': _selectedBrandIds.isNotEmpty ? _selectedBrandIds.first : null,
         'specs': {
           ...(widget.product?.specs ?? {}),
           'category_ids': _selectedCategoryIds,
           'brand_ids': _selectedBrandIds,
+          'merge_with_groups': _mergeWithGroups,
+          'max_merge_qty': int.tryParse(_maxMergeQtyCtrl.text.trim()) != null && int.tryParse(_maxMergeQtyCtrl.text.trim())! > 0
+              ? int.tryParse(_maxMergeQtyCtrl.text.trim())
+              : null,
         },
         'images': finalImageUrls,
         'in_stock': _inStock,
@@ -10531,41 +10845,78 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           'إعدادات التوصيل',
                           style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
                         ),
-                        const SizedBox(height: 10),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Switch(
-                              value: _mergeDelivery,
-                              activeThumbColor: const Color(0xFF0A192F),
-                              onChanged: (v) => setState(() => _mergeDelivery = v),
-                            ),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'دمج التوصيل مع منتجات نفس المجموعة',
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFF0F172A)),
-                                  ),
-                                  SizedBox(height: 2),
-                                  Text(
-                                    'عند التفعيل، تُحتسب أجرة التوصيل مرة واحدة لكل مجموعة؛ عند الإيقاف، تُحتسب مستقلة دائماً.',
-                                    style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), height: 1.3),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         const Text(
-                          'مجموعة التوصيل (مثال: Small Parts / Medium Parts / Large Parts)',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold),
+                          'مجموعة التوصيل (حجم القطعة):',
+                          style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'اختر حجماً للمنتج، أو اتركه بدون تحديد ليكون التوصيل مستقلاً دائماً:',
+                          style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), height: 1.3),
                         ),
                         const SizedBox(height: 6),
-                        _buildInput(_deliveryGroupCtrl, hint: 'اترك فارغاً لتوصيل مستقل لهذا المنتج'),
+                        Row(
+                          children: [
+                            _buildGroupOption('small', 'قطع صغيرة'),
+                            const SizedBox(width: 8),
+                            _buildGroupOption('medium', 'قطع متوسطة'),
+                            const SizedBox(width: 8),
+                            _buildGroupOption('large', 'قطع كبيرة'),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'الدمج مع القطع:',
+                          style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'حدد المجموعات التي يمكن لهذه القطعة الاندماج معها واحتساب سعر توصيل القطعة الأكبر فقط:',
+                          style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), height: 1.3),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            _buildMergeOption('small', 'قطع صغيرة'),
+                            const SizedBox(width: 8),
+                            _buildMergeOption('medium', 'قطع متوسطة'),
+                            const SizedBox(width: 8),
+                            _buildMergeOption('large', 'قطع كبيرة'),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'الحد الأقصى للدمج في الطرد الواحد:',
+                          style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'أقصى عدد قطع تندمج في طرد واحد بسعر توصيل واحد (مثال: اكتب 2 للدعامية، أو اتركه فارغاً لدمج غير محدود):',
+                          style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), height: 1.3),
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: 180,
+                          height: 40,
+                          child: TextField(
+                            controller: _maxMergeQtyCtrl,
+                            keyboardType: TextInputType.number,
+                            textDirection: TextDirection.ltr,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            decoration: InputDecoration(
+                              hintText: 'غير محدود (مثلاً 2)',
+                              hintStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8), fontWeight: FontWeight.normal),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              filled: true,
+                              fillColor: Colors.white,
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFCBD5E1))),
+                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF0A192F), width: 1.5)),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -10972,6 +11323,128 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupOption(String groupId, String label) {
+    final isSelected = _selectedDeliveryGroup == groupId;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedDeliveryGroup = isSelected ? '' : groupId;
+          });
+        },
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF0A192F).withValues(alpha: 0.08) : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFCBD5E1),
+              width: isSelected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: Checkbox(
+                  value: isSelected,
+                  activeColor: const Color(0xFF0A192F),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  onChanged: (v) {
+                    setState(() {
+                      _selectedDeliveryGroup = (v ?? false) ? groupId : '';
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    color: isSelected ? const Color(0xFF0A192F) : const Color(0xFF334155),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMergeOption(String groupId, String label) {
+    final isSelected = _mergeWithGroups.contains(groupId);
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (isSelected) {
+              _mergeWithGroups.remove(groupId);
+            } else {
+              _mergeWithGroups.add(groupId);
+            }
+            _mergeDelivery = _mergeWithGroups.isNotEmpty;
+          });
+        },
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF0A192F).withValues(alpha: 0.08) : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? const Color(0xFF0A192F) : const Color(0xFFCBD5E1),
+              width: isSelected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: Checkbox(
+                  value: isSelected,
+                  activeColor: const Color(0xFF0A192F),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  onChanged: (v) {
+                    setState(() {
+                      if (v ?? false) {
+                        if (!_mergeWithGroups.contains(groupId)) _mergeWithGroups.add(groupId);
+                      } else {
+                        _mergeWithGroups.remove(groupId);
+                      }
+                      _mergeDelivery = _mergeWithGroups.isNotEmpty;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    color: isSelected ? const Color(0xFF0A192F) : const Color(0xFF334155),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

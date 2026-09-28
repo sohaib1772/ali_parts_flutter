@@ -49,20 +49,12 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
 
     _pageWorker = ever(controller.currentIndex, (int targetIdx) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         if (_pageController.hasClients) {
           final cur = _pageController.page?.round();
           if (cur != null && cur != targetIdx) {
             _pageController.jumpToPage(targetIdx);
           }
-        } else {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_pageController.hasClients) {
-              final cur = _pageController.page?.round();
-              if (cur != null && cur != targetIdx) {
-                _pageController.jumpToPage(targetIdx);
-              }
-            }
-          });
         }
       });
     });
@@ -321,6 +313,7 @@ class _ReelItemCardState extends State<_ReelItemCard>
   Worker? _muteWorker;
   bool _didTriggerEnd = false;
   bool _pendingPlay = false;
+  bool _isCardActive = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -332,7 +325,6 @@ class _ReelItemCardState extends State<_ReelItemCard>
   // Video progress / seek bar
   bool _isScrubbing = false;
   Duration _scrubPosition = Duration.zero;
-  Duration _currentPosition = Duration.zero;
   Duration _totalDuration = Duration.zero;
   final ValueNotifier<Duration> _positionNotifier = ValueNotifier(
     Duration.zero,
@@ -448,6 +440,11 @@ class _ReelItemCardState extends State<_ReelItemCard>
 
   void _handleActiveChanged(bool active) {
     if (!mounted) return;
+    if (_isCardActive == active && ((active && _isPlaying) || (!active && !_isPlaying))) {
+      return;
+    }
+    _isCardActive = active;
+
     if (active) {
       _userPaused = false;
       _didTriggerEnd = false;
@@ -455,21 +452,15 @@ class _ReelItemCardState extends State<_ReelItemCard>
         if (_ytCtrl == null) {
           _initYouTube();
         } else {
-          _pendingPlay = true;
-          if (_ytCtrl!.value.isReady) {
-            _pendingPlay = false;
-            _ytCtrl!.play();
-          }
+          _pendingPlay = false;
+          _ytCtrl!.play();
         }
         _safeSetState(() => _isPlaying = true);
       } else if (_hasVideo) {
         if (_videoCtrl == null) {
           _initVideo();
         } else if (_isVideoInitialized) {
-          if (_videoCtrl!.value.isCompleted ||
-              (_totalDuration > Duration.zero &&
-                  _currentPosition >=
-                      _totalDuration - const Duration(milliseconds: 500))) {
+          if (_videoCtrl!.value.isCompleted) {
             _videoCtrl!.seekTo(Duration.zero);
           }
           _videoCtrl!.play();
@@ -532,15 +523,12 @@ class _ReelItemCardState extends State<_ReelItemCard>
     if (!val.isReady) return;
 
     // Trigger pending play when player becomes ready on an active reel
-    if (_isActive &&
-        !_userPaused &&
-        (_pendingPlay || (!val.isPlaying && _isPlaying))) {
+    if (_isActive && !_userPaused && _pendingPlay) {
       _pendingPlay = false;
       _ytCtrl!.play();
     }
 
     if (!_isScrubbing) {
-      _currentPosition = val.position;
       _totalDuration = val.metaData.duration;
       _positionNotifier.value = val.position;
       if (_isPlaying != val.isPlaying) {
@@ -569,7 +557,6 @@ class _ReelItemCardState extends State<_ReelItemCard>
         _safeSetState(() {
           _isVideoInitialized = true;
           _totalDuration = vCtrl.value.duration;
-          _currentPosition = vCtrl.value.position;
         });
         if (_isActive && !_userPaused) {
           vCtrl.play();
@@ -588,7 +575,6 @@ class _ReelItemCardState extends State<_ReelItemCard>
     if (!val.isInitialized) return;
 
     if (!_isScrubbing) {
-      _currentPosition = val.position;
       _totalDuration = val.duration;
       _positionNotifier.value = val.position;
       if (_isPlaying != val.isPlaying) {
@@ -598,20 +584,17 @@ class _ReelItemCardState extends State<_ReelItemCard>
       }
     }
 
-    // Seamless loop replay when video reaches end
+    // Seamless loop replay fallback if native looping is not active
     if (_isActive && !_isScrubbing && !_didTriggerEnd) {
-      final pos = val.position;
-      final dur = val.duration;
-      if (dur > const Duration(milliseconds: 500) &&
-          (val.isCompleted || (pos >= dur && pos > Duration.zero))) {
+      if (val.isCompleted && !val.isLooping) {
         _didTriggerEnd = true;
-        _videoCtrl?.seekTo(Duration.zero);
-        _videoCtrl?.play();
-        _didTriggerEnd = false;
+        _videoCtrl?.seekTo(Duration.zero).then((_) {
+          if (mounted && _isActive && !_userPaused) {
+            _videoCtrl?.play();
+          }
+          _didTriggerEnd = false;
+        });
       }
-    } else if (_didTriggerEnd &&
-        val.position < val.duration - const Duration(milliseconds: 500)) {
-      _didTriggerEnd = false;
     }
   }
 
@@ -941,22 +924,49 @@ class _ReelItemCardState extends State<_ReelItemCard>
                     ),
                     const SizedBox(height: 12),
 
-                    // Share Button with Deeplink
-                    _buildRailButton(
-                      icon: Icons.share_rounded,
-                      iconColor: Colors.white,
-                      label: 'مشاركة',
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        final title =
-                            widget.banner.titleAr?.trim().isNotEmpty == true
-                            ? widget.banner.titleAr!.trim()
-                            : 'عرض مميز من علي لقطع الغيار';
-                        final deepLink =
-                            'https://maktabali.com/reels?id=${widget.banner.id}';
-                        final shareText =
-                            '$title\n\nشاهد العرض عبر تطبيق علي لقطع الغيار:\n$deepLink';
-                        Share.share(shareText, subject: title);
+                    // Share Button with Deeplink (iOS compatible with sharePositionOrigin)
+                    Builder(
+                      builder: (btnContext) {
+                        return _buildRailButton(
+                          icon: Icons.share_rounded,
+                          iconColor: Colors.white,
+                          label: 'مشاركة',
+                          onTap: () async {
+                            HapticFeedback.selectionClick();
+                            final title =
+                                widget.banner.titleAr?.trim().isNotEmpty == true
+                                    ? widget.banner.titleAr!.trim()
+                                    : 'عرض مميز من علي لقطع الغيار';
+                            final deepLink =
+                                'https://maktabali.com/reels?id=${widget.banner.id}';
+                            final shareText =
+                                '$title\n\nشاهد العرض عبر تطبيق علي لقطع الغيار:\n$deepLink';
+
+                            Rect? origin;
+                            try {
+                              final box = btnContext.findRenderObject() as RenderBox?;
+                              if (box != null && box.hasSize) {
+                                origin = box.localToGlobal(Offset.zero) & box.size;
+                              }
+                            } catch (_) {}
+                            origin ??= Rect.fromLTWH(
+                              0,
+                              0,
+                              MediaQuery.of(btnContext).size.width,
+                              MediaQuery.of(btnContext).size.height / 2,
+                            );
+
+                            try {
+                              await Share.share(
+                                shareText,
+                                subject: title,
+                                sharePositionOrigin: origin,
+                              );
+                            } catch (e) {
+                              AppLogger.e('Error sharing reel: $e');
+                            }
+                          },
+                        );
                       },
                     ),
                   ],

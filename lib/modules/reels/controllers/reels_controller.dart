@@ -49,9 +49,6 @@ class ReelsController extends GetxController {
   void setTabVisible(bool visible) {
     if (isTabVisible.value == visible) return;
     _safeNotify(() => isTabVisible.value = visible);
-    if (visible) {
-      refreshBanners();
-    }
   }
 
   void checkTabVisibility() {
@@ -66,8 +63,14 @@ class ReelsController extends GetxController {
       final targetId = args['targetBannerId'] as String?;
       if (targetId != null && targetId.isNotEmpty) {
         final idx = banners.indexWhere((b) => b.id == targetId);
-        if (idx != -1 && currentIndex.value != idx) {
-          currentIndex.value = idx;
+        if (idx != -1) {
+          if (currentIndex.value != idx) {
+            currentIndex.value = idx;
+          }
+        } else {
+          // If banner list doesn't have targetId yet, refresh with targetBannerId
+          refreshBanners(targetBannerId: targetId);
+          return;
         }
       } else if (args['initialIndex'] is int) {
         final target = (args['initialIndex'] as int).clamp(0, (banners.length - 1).clamp(0, 999));
@@ -95,6 +98,10 @@ class ReelsController extends GetxController {
       }
 
       _safeNotify(() {
+        final currentActiveId = (banners.isNotEmpty && currentIndex.value < banners.length)
+            ? banners[currentIndex.value].id
+            : null;
+
         banners.assignAll(fetched);
 
         if (targetBannerId != null && targetBannerId.isNotEmpty) {
@@ -106,6 +113,11 @@ class ReelsController extends GetxController {
           final target = targetIndex.clamp(0, (banners.length - 1).clamp(0, 999));
           if (currentIndex.value != target) {
             currentIndex.value = target;
+          }
+        } else if (currentActiveId != null) {
+          final idx = banners.indexWhere((b) => b.id == currentActiveId);
+          if (idx != -1 && currentIndex.value != idx) {
+            currentIndex.value = idx;
           }
         } else if (currentIndex.value >= banners.length && banners.isNotEmpty) {
           currentIndex.value = (banners.length - 1).clamp(0, 999);
