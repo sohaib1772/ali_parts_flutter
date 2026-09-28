@@ -38,8 +38,10 @@ class ProductDetailsController extends GetxController {
       product.value = args;
       isLoading.value = false;
       _loadMetadata(args);
-    } else if (args is String) {
+    } else if (args is String && args.isNotEmpty) {
       loadProductById(args);
+    } else if (Get.parameters['id'] != null && Get.parameters['id']!.isNotEmpty) {
+      loadProductById(Get.parameters['id']!);
     }
   }
 

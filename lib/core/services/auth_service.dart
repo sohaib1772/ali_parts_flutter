@@ -203,7 +203,59 @@ class AuthService extends GetxService {
       return;
     }
 
-    // 2. OAuth Redirect
+    // 2. Product Deep Link
+    final isProductLink = ((uri.host == 'maktabali.com' || uri.host == 'www.maktabali.com') &&
+            uri.path.startsWith('/product')) ||
+        (uri.scheme == 'com.mkteb.ali.chevrolet' &&
+            (uri.host == 'product' || uri.path.startsWith('/product')));
+
+    if (isProductLink) {
+      String? productId = uri.queryParameters['id'] ?? uri.queryParameters['productId'];
+      if (productId == null || productId.isEmpty) {
+        final segments = uri.pathSegments;
+        if (segments.isNotEmpty && segments.last != 'product') {
+          productId = segments.last;
+        }
+      }
+
+      if (productId != null && productId.isNotEmpty) {
+        final uriString = uri.toString();
+        final now = DateTime.now();
+        if (_lastHandledDeepLink == uriString &&
+            _lastDeepLinkTime != null &&
+            now.difference(_lastDeepLinkTime!) < const Duration(seconds: 4)) {
+          AppLogger.d('Ignoring duplicate product deep link within cooldown: $uriString');
+          return;
+        }
+
+        if (!_isNavigatorReady || Get.currentRoute == AppRoutes.splash || Get.currentRoute.isEmpty) {
+          AppLogger.d('Navigator not ready yet or in splash, queuing pending product deep link: $uri');
+          _pendingDeepLinkUri = uri;
+          return;
+        }
+
+        _lastHandledDeepLink = uriString;
+        _lastDeepLinkTime = now;
+
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (!_isNavigatorReady) {
+            _pendingDeepLinkUri = uri;
+            return;
+          }
+          try {
+            if (Get.isDialogOpen == true) Get.back();
+            if (Get.isBottomSheetOpen == true) Get.back();
+
+            Get.toNamed(AppRoutes.productDetails, arguments: productId, preventDuplicates: false);
+          } catch (e) {
+            AppLogger.e('Error navigating to product via deep link: $e');
+          }
+        });
+        return;
+      }
+    }
+
+    // 3. OAuth Redirect
     if (uri.scheme != 'com.mkteb.ali.chevrolet' || uri.host != 'auth') {
       return;
     }

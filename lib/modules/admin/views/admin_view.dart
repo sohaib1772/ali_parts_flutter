@@ -2690,10 +2690,52 @@ class _AdminViewState extends State<AdminView> {
             color: const Color(0xFFF8FAFC),
             child: Column(
               children: [
-                // Top Unified AppHeader with auto back button
-                const AppHeaderWidget(
+                // Top Unified AppHeader with auto back button & Refresh action
+                AppHeaderWidget(
                   title: 'لوحة الإدارة',
                   showBack: true,
+                  customActions: [
+                    InkWell(
+                      onTap: () async {
+                        await _handleRefresh();
+                        Get.snackbar(
+                          'تم التحديث',
+                          'تم تحديث البيانات بنجاح',
+                          snackPosition: SnackPosition.BOTTOM,
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: const Color(0xFF0F172A),
+                          colorText: Colors.white,
+                          margin: const EdgeInsets.all(12),
+                          borderRadius: 12,
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF132B45),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.refresh_rounded, color: AppColors.gold, size: 16),
+                            SizedBox(width: 4),
+                            Text(
+                              'تحديث',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                 ),
 
                 // Single outer scrollable ListView for the whole page with Pull-to-Refresh!
@@ -4114,14 +4156,48 @@ class _AdminViewState extends State<AdminView> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '${_totalProducts > 0 ? _totalProducts : _products.length} منتج',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
               ),
+              const Spacer(),
+              // زر تحديث المنتجات
+              OutlinedButton.icon(
+                onPressed: _isLoadingProducts
+                    ? null
+                    : () async {
+                        await _loadProducts(isRefresh: true);
+                        Get.snackbar(
+                          'تم التحديث',
+                          'تم تحديث قائمة المنتجات بنجاح',
+                          snackPosition: SnackPosition.BOTTOM,
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: const Color(0xFF0F172A),
+                          colorText: Colors.white,
+                          margin: const EdgeInsets.all(12),
+                          borderRadius: 12,
+                        );
+                      },
+                icon: _isLoadingProducts
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0A192F)),
+                      )
+                    : const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('تحديث', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF0A192F),
+                  side: const BorderSide(color: Color(0xFFCBD5E1)),
+                  backgroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(width: 8),
               ElevatedButton.icon(
                 onPressed: () => _showAddEditProductDialog(),
                 icon: const Icon(IconsaxPlusBold.add, size: 16),
@@ -4381,7 +4457,7 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // View Mode Switcher (الطلبات النشطة vs الطلبات المأرشفة) - تماماً مثل الموقع
+          // View Mode Switcher (الطلبات النشطة vs الطلبات المأرشفة)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(4),
@@ -4394,7 +4470,7 @@ class _AdminViewState extends State<AdminView> {
               children: [
                 Expanded(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: 9),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0F172A),
                       borderRadius: BorderRadius.circular(12),
@@ -4415,20 +4491,20 @@ class _AdminViewState extends State<AdminView> {
                           fit: BoxFit.scaleDown,
                           child: Text(
                             'الطلبات النشطة (${_orders.length})',
-                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.white),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Expanded(
                   child: InkWell(
                     onTap: () => Get.toNamed(AppRoutes.archivedOrders)?.then((_) => _loadOrders()),
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -4438,54 +4514,8 @@ class _AdminViewState extends State<AdminView> {
                             fit: BoxFit.scaleDown,
                             child: Text(
                               'الطلبات المأرشفة ($_archivedOrdersCount)',
-                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () async {
-                      await _loadOrders(silent: true);
-                      Get.snackbar(
-                        'تم التحديث',
-                        'تم تحديث قائمة الطلبات بنجاح',
-                        snackPosition: SnackPosition.BOTTOM,
-                        duration: const Duration(seconds: 2),
-                        backgroundColor: const Color(0xFF0F172A),
-                        colorText: Colors.white,
-                        margin: const EdgeInsets.all(12),
-                        borderRadius: 12,
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.03),
-                            blurRadius: 3,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF0F172A)),
-                          SizedBox(width: 4),
-                          Text(
-                            'تحديث',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
                           ),
                         ],
                       ),
@@ -4700,25 +4730,45 @@ class _AdminViewState extends State<AdminView> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => Get.toNamed(AppRoutes.archivedOrders)?.then((_) => _loadOrders()),
-                    icon: const Icon(IconsaxPlusLinear.archive_1, size: 16, color: Color(0xFFD97706)),
-                    label: FittedBox(
+                    onPressed: _isLoadingOrders
+                        ? null
+                        : () async {
+                            await _loadOrders(silent: true);
+                            Get.snackbar(
+                              'تم التحديث',
+                              'تم تحديث قائمة الطلبات بنجاح',
+                              snackPosition: SnackPosition.BOTTOM,
+                              duration: const Duration(seconds: 2),
+                              backgroundColor: const Color(0xFF0F172A),
+                              colorText: Colors.white,
+                              margin: const EdgeInsets.all(12),
+                              borderRadius: 12,
+                            );
+                          },
+                    icon: _isLoadingOrders
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F172A)),
+                          )
+                        : const Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF0F172A)),
+                    label: const FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        'الطلبات المأرشفة ($_archivedOrdersCount) 📦',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
+                        'تحديث الطلبات',
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
                       ),
                     ),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFFDE68A)),
-                      backgroundColor: const Color(0xFFFFFBEB),
+                      side: const BorderSide(color: Color(0xFFCBD5E1)),
+                      backgroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                     ),
                   ),
                 ),
                 if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: _showArchiveAllOrdersDialog,
@@ -4727,14 +4777,14 @@ class _AdminViewState extends State<AdminView> {
                         fit: BoxFit.scaleDown,
                         child: Text(
                           'أرشفة جميع الطلبات',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFFECDD3)),
                         backgroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                       ),
                     ),
                   ),
