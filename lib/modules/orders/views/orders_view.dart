@@ -111,7 +111,8 @@ class _OrdersViewState extends State<OrdersView> {
 
       if (result.success) {
         _fetchOrders();
-        Get.snackbar('تم الإلغاء', 'تم إلغاء الطلب بنجاح', backgroundColor: AppColors.navyDark, colorText: Colors.white);
+        Get.find<AuthService>().fetchUserProfile();
+        Get.snackbar('تم الإلغاء', 'تم إلغاء الطلب واسترجاع النقاط بنجاح', backgroundColor: AppColors.navyDark, colorText: Colors.white);
       } else {
         Get.snackbar('خطأ', result.message ?? 'تعذّر إلغاء الطلب', backgroundColor: AppColors.outOfStock, colorText: Colors.white);
       }
