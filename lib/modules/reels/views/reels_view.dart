@@ -1296,11 +1296,11 @@ class _ReelItemCardState extends State<_ReelItemCard>
         (_isPlaying || _ytCtrl!.value.isPlaying || _ytCtrl!.value.position > Duration.zero || _userPaused);
 
     final size = MediaQuery.of(context).size;
-    final isShort =
-        widget.banner.videoUrl?.toLowerCase().contains('shorts') == true;
-    final double aspect = isShort && size.height > 0
+    // In Reels, always use full portrait aspect ratio so all vertically recorded videos
+    // (both YouTube Shorts <= 3m and regular YouTube videos > 3m) fill the screen naturally
+    final double aspect = (size.height > 0)
         ? (size.width / size.height)
-        : (16 / 9);
+        : (9 / 16);
 
     return Stack(
       fit: StackFit.expand,

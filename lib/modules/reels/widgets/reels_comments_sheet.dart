@@ -81,6 +81,14 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
   void initState() {
     super.initState();
     _loadComments();
+    // Auto-focus immediately after bottom sheet slide-in animation finishes
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 280), () {
+        if (mounted && !_focusNode.hasFocus) {
+          _focusNode.requestFocus();
+        }
+      });
+    });
   }
 
   @override
@@ -290,17 +298,13 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final isKeyboardOpen = bottomInset > 0;
-    final sheetHeight = isKeyboardOpen
-        ? MediaQuery.of(context).size.height * 0.85
-        : MediaQuery.of(context).size.height * 0.75;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final sheetHeight = screenHeight * 0.82;
 
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       behavior: HitTestBehavior.translucent,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutQuad,
+      child: Container(
         height: sheetHeight,
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -461,7 +465,7 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
           // Bottom Input Field
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) {}, // Prevents vertical drag / micro-jitter from bubbling up to the modal bottom sheet
+            onTap: () {}, // Prevent taps inside bottom bar from bubbling up to sheet unfocus
             child: Container(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
               decoration: BoxDecoration(
@@ -527,42 +531,38 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
                   Row(
                     children: [
                       Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            if (!_focusNode.hasFocus) {
-                              _focusNode.requestFocus();
-                            }
-                          },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF1F5F9),
+                        child: TextField(
+                          controller: _textCtrl,
+                          focusNode: _focusNode,
+                          textDirection: TextDirection.rtl,
+                          minLines: 1,
+                          maxLines: 3,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _sendComment(),
+                          style: GoogleFonts.cairo(fontSize: 13.5, color: const Color(0xFF0F172A)),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            filled: true,
+                            fillColor: const Color(0xFFF1F5F9),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
                             ),
-                            child: TextField(
-                              controller: _textCtrl,
-                              focusNode: _focusNode,
-                              textDirection: TextDirection.rtl,
-                              minLines: 1,
-                              maxLines: 3,
-                              onTap: () {
-                                if (!_focusNode.hasFocus) {
-                                  _focusNode.requestFocus();
-                                }
-                              },
-                              style: GoogleFonts.cairo(fontSize: 13.5, color: const Color(0xFF0F172A)),
-                              decoration: InputDecoration(
-                                hintText: _editingComment != null
-                                    ? 'تعديل التعليق...'
-                                    : _replyingTo != null
-                                        ? (_asOfficeName && _isAdminOrStaff ? 'اكتب رد مكتب علي شوفرليت...' : 'اكتب ردك هنا...')
-                                        : (_asOfficeName && _isAdminOrStaff ? 'أضف تعليقاً باسم مكتب علي شوفرليت...' : 'أضف تعليقاً على هذا العرض...'),
-                                hintStyle: GoogleFonts.cairo(fontSize: 12.5, color: const Color(0xFF94A3B8)),
-                                border: InputBorder.none,
-                                isDense: false,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
                             ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: const BorderSide(color: AppColors.gold, width: 1.2),
+                            ),
+                            hintText: _editingComment != null
+                                ? 'تعديل التعليق...'
+                                : _replyingTo != null
+                                    ? (_asOfficeName && _isAdminOrStaff ? 'اكتب رد مكتب علي شوفرليت...' : 'اكتب ردك هنا...')
+                                    : (_asOfficeName && _isAdminOrStaff ? 'أضف تعليقاً باسم مكتب علي شوفرليت...' : 'أضف تعليقاً على هذا العرض...'),
+                            hintStyle: GoogleFonts.cairo(fontSize: 12.5, color: const Color(0xFF94A3B8)),
                           ),
                         ),
                       ),
