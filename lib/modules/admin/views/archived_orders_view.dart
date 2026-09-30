@@ -277,60 +277,56 @@ class _ArchivedOrdersViewState extends State<ArchivedOrdersView> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${filtered.length} طلب مأرشف',
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
-                  ),
-                  InkWell(
-                    onTap: _loadArchivedOrders,
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.refresh_rounded, size: 16, color: AppColors.gold),
-                        SizedBox(width: 4),
-                        Text('تحديث', style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                  ),
-                ],
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  '${filtered.length} طلب مأرشف',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
+                ),
               ),
             ),
             const SizedBox(height: 6),
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
-                  : filtered.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 64,
-                                height: 64,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFF1F5F9),
-                                  shape: BoxShape.circle,
+                  : RefreshIndicator(
+                      color: AppColors.gold,
+                      onRefresh: _loadArchivedOrders,
+                      child: filtered.isEmpty
+                          ? LayoutBuilder(
+                              builder: (context, constraints) => SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 64,
+                                          height: 64,
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xFFF1F5F9),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(IconsaxPlusLinear.archive_1, size: 32, color: Color(0xFF94A3B8)),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          _searchQuery.isEmpty ? 'لا توجد طلبات مأرشفة' : 'لا توجد نتائج مطابقة للبحث',
+                                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                                child: const Icon(IconsaxPlusLinear.archive_1, size: 32, color: Color(0xFF94A3B8)),
                               ),
-                              const SizedBox(height: 12),
-                              Text(
-                                _searchQuery.isEmpty ? 'لا توجد طلبات مأرشفة' : 'لا توجد نتائج مطابقة للبحث',
-                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
-                              ),
-                            ],
-                          ),
-                        )
-                      : RefreshIndicator(
-                          color: AppColors.gold,
-                          onRefresh: _loadArchivedOrders,
-                          child: ListView.separated(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
-                            itemCount: filtered.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 12),
+                            )
+                          : ListView.separated(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
                             itemBuilder: (context, index) {
                               final o = filtered[index];
                               final id = o['id'] as String;

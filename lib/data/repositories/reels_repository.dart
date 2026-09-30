@@ -18,14 +18,36 @@ class ReelsRepository {
 
   Dio get _dio => _dioClient.dio;
 
-  /// Fetch like count and user like status for a banner
+  /// Fetch all banner IDs liked by the user in a single fast query
+  Future<Set<String>> fetchUserLikedBannerIds(String userId) async {
+    if (userId.trim().isEmpty) return {};
+    try {
+      final res = await _dio.get(
+        ApiConstants.bannerLikes,
+        queryParameters: {
+          'user_id': 'eq.$userId',
+          'select': 'banner_id',
+        },
+      );
+      if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
+        return (res.data as List)
+            .map((e) => (e as Map)['banner_id']?.toString() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      }
+    } catch (e) {
+      AppLogger.e('Error fetching user liked banners', e);
+    }
+    return {};
+  }
+
+  /// Fetch like count and user like status for a banner in parallel
   Future<ReelLikesData> fetchLikes(String bannerId, String? userId) async {
     if (bannerId.trim().isEmpty) {
       return ReelLikesData(count: 0, isLiked: false);
     }
     try {
-      // 1. Fetch total count
-      final countRes = await _dio.get(
+      final countFuture = _dio.get(
         ApiConstants.bannerLikes,
         queryParameters: {
           'banner_id': 'eq.$bannerId',
@@ -34,6 +56,24 @@ class ReelsRepository {
         options: Options(headers: {'Prefer': 'count=exact'}),
       );
 
+      final userLikeFuture = (userId != null && userId.trim().isNotEmpty)
+          ? _dio.get(
+              ApiConstants.bannerLikes,
+              queryParameters: {
+                'banner_id': 'eq.$bannerId',
+                'user_id': 'eq.$userId',
+                'select': 'banner_id',
+                'limit': 1,
+              },
+            )
+          : null;
+
+      final results = await Future.wait([
+        countFuture,
+        if (userLikeFuture != null) userLikeFuture,
+      ]);
+
+      final countRes = results[0];
       int totalCount = 0;
       final contentRange = countRes.headers.value('content-range');
       if (contentRange != null && contentRange.contains('/')) {
@@ -42,18 +82,9 @@ class ReelsRepository {
         totalCount = (countRes.data as List).length;
       }
 
-      // 2. Check if current user liked
       bool isLiked = false;
-      if (userId != null && userId.trim().isNotEmpty) {
-        final userLikeRes = await _dio.get(
-          ApiConstants.bannerLikes,
-          queryParameters: {
-            'banner_id': 'eq.$bannerId',
-            'user_id': 'eq.$userId',
-            'select': 'banner_id',
-            'limit': 1,
-          },
-        );
+      if (userLikeFuture != null && results.length > 1) {
+        final userLikeRes = results[1];
         if (userLikeRes.data is List && (userLikeRes.data as List).isNotEmpty) {
           isLiked = true;
         }
@@ -272,6 +303,39 @@ class ReelsRepository {
       return res.statusCode == 200 || res.statusCode == 204;
     } catch (e) {
       AppLogger.e('Error deleting comment $commentId', e);
+      return false;
+    }
+  }
+
+  /// Update an existing comment
+  Future<bool> updateComment({
+    required String commentId,
+    required String content,
+  }) async {
+    if (commentId.trim().isEmpty || content.trim().isEmpty) return false;
+    try {
+      final res = await _dio.patch(
+        ApiConstants.bannerComments,
+        queryParameters: {'id': 'eq.$commentId'},
+        data: {
+          'content': content.trim(),
+        },
+        options: Options(headers: {'Prefer': 'return=representation'}),
+      );
+
+      if ((res.statusCode == 200 || res.statusCode == 201) && res.data is List) {
+        final list = res.data as List;
+        if (list.isNotEmpty) {
+          AppLogger.d('Comment updated successfully in database: $commentId');
+          return true;
+        } else {
+          AppLogger.w('Comment update matched 0 rows (RLS policy blocked update): $commentId');
+          return false;
+        }
+      }
+      return false;
+    } catch (e) {
+      AppLogger.e('Error updating comment $commentId', e);
       return false;
     }
   }

@@ -29,6 +29,7 @@ class ReelsCommentsSheet extends StatefulWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => ReelsCommentsSheet(
         bannerId: bannerId,
@@ -52,6 +53,7 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
   bool _isLoading = true;
   bool _isSending = false;
   BannerCommentModel? _replyingTo;
+  BannerCommentModel? _editingComment;
   bool _asOfficeName = true;
 
   bool get _isAdminOrStaff => _auth.isAdmin.value || _auth.isStaff.value;
@@ -88,6 +90,50 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
     super.dispose();
   }
 
+  void _startEditing(BannerCommentModel comment) {
+    setState(() {
+      _editingComment = comment;
+      _replyingTo = null;
+      _textCtrl.text = comment.content;
+      if (comment.isAdminReply) {
+        _asOfficeName = true;
+      }
+    });
+    Future.microtask(() => _focusNode.requestFocus());
+  }
+
+  void _cancelEditing() {
+    setState(() {
+      _editingComment = null;
+      _textCtrl.clear();
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  void _updateCommentContentLocally(String id, String newContent) {
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    for (int i = 0; i < _comments.length; i++) {
+      if (_comments[i].id == id) {
+        _comments[i] = _comments[i].copyWith(
+          content: newContent,
+          updatedAt: nowIso,
+        );
+        setState(() {});
+        return;
+      }
+      for (int j = 0; j < _comments[i].replies.length; j++) {
+        if (_comments[i].replies[j].id == id) {
+          _comments[i].replies[j] = _comments[i].replies[j].copyWith(
+            content: newContent,
+            updatedAt: nowIso,
+          );
+          setState(() {});
+          return;
+        }
+      }
+    }
+  }
+
   Future<void> _loadComments() async {
     setState(() => _isLoading = true);
     try {
@@ -112,6 +158,55 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
       return;
     }
 
+    // Handle Edit Mode
+    if (_editingComment != null) {
+      if (text == _editingComment!.content.trim()) {
+        _cancelEditing();
+        return;
+      }
+
+      setState(() => _isSending = true);
+      try {
+        final ok = await _reelsRepo.updateComment(
+          commentId: _editingComment!.id,
+          content: text,
+        );
+        if (ok) {
+          final editedId = _editingComment!.id;
+          _updateCommentContentLocally(editedId, text);
+          _cancelEditing();
+          await _loadComments();
+          Get.snackbar(
+            'تم التعديل',
+            'تم تحديث التعليق بنجاح',
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: const Color(0xFF0A192F),
+            colorText: Colors.white,
+            duration: const Duration(seconds: 2),
+            margin: const EdgeInsets.all(12),
+            borderRadius: 12,
+          );
+        } else {
+          Get.snackbar(
+            'تنبيه',
+            'تعذر تعديل التعليق، يمكنك تعديل تعليقاتك الشخصية فقط',
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: const Color(0xFFDC2626),
+            colorText: Colors.white,
+            duration: const Duration(seconds: 3),
+            margin: const EdgeInsets.all(12),
+            borderRadius: 12,
+          );
+        }
+      } catch (e) {
+        Get.snackbar('تنبيه', 'تعذر تعديل التعليق، يرجى المحاولة لاحقاً');
+      } finally {
+        if (mounted) setState(() => _isSending = false);
+      }
+      return;
+    }
+
+    // Handle New Comment or Reply
     setState(() => _isSending = true);
     try {
       final newComment = await _reelsRepo.addComment(
@@ -157,6 +252,9 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
     if (confirmed == true) {
       final ok = await _reelsRepo.deleteComment(comment.id);
       if (ok) {
+        if (_editingComment?.id == comment.id) {
+          _cancelEditing();
+        }
         widget.onCommentDeleted?.call();
         _loadComments();
       }
@@ -192,15 +290,24 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final isKeyboardOpen = bottomInset > 0;
+    final sheetHeight = isKeyboardOpen
+        ? MediaQuery.of(context).size.height * 0.85
+        : MediaQuery.of(context).size.height * 0.75;
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
-        children: [
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutQuad,
+        height: sheetHeight,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
           // Drag handle
           Center(
             child: Container(
@@ -266,6 +373,7 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
                         ),
                       )
                     : ListView.separated(
+                        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                         itemCount: _comments.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 14),
@@ -273,8 +381,54 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
                       ),
           ),
 
+          // Editing banner
+          if (_editingComment != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: const Color(0xFFEFF6FF),
+              child: Row(
+                children: [
+                  const Icon(IconsaxPlusBold.edit_2, size: 15, color: Color(0xFF0284C7)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'تعديل التعليق',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF0369A1),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  InkWell(
+                    onTap: _cancelEditing,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'إلغاء',
+                            style: GoogleFonts.cairo(
+                              fontSize: 11.5,
+                              color: const Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.close_rounded, size: 16, color: Color(0xFF64748B)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
           // Replying banner
-          if (_replyingTo != null)
+          else if (_replyingTo != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               color: const Color(0xFFF8FAFC),
@@ -305,125 +459,150 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
             ),
 
           // Bottom Input Field
-          Container(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  offset: const Offset(0, -2),
-                  blurRadius: 10,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Admin / Staff checkbox option
-                if (_isAdminOrStaff)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: InkWell(
-                      onTap: () => setState(() => _asOfficeName = !_asOfficeName),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: Checkbox(
-                                value: _asOfficeName,
-                                onChanged: (val) => setState(() => _asOfficeName = val ?? false),
-                                activeColor: AppColors.gold,
-                                checkColor: const Color(0xFF0A192F),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Icon(
-                              _asOfficeName ? IconsaxPlusBold.verify : IconsaxPlusLinear.profile,
-                              size: 14,
-                              color: _asOfficeName ? AppColors.gold : const Color(0xFF64748B),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _replyingTo != null
-                                  ? 'الرد باسم "مكتب علي شوفرليت"'
-                                  : 'التعليق باسم "مكتب علي شوفرليت"',
-                              style: GoogleFonts.cairo(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.bold,
-                                color: _asOfficeName ? const Color(0xFF0A192F) : const Color(0xFF64748B),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: (_) {}, // Prevents vertical drag / micro-jitter from bubbling up to the modal bottom sheet
+            child: Container(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    offset: const Offset(0, -2),
+                    blurRadius: 10,
                   ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: TextField(
-                          controller: _textCtrl,
-                          focusNode: _focusNode,
-                          textDirection: TextDirection.rtl,
-                          minLines: 1,
-                          maxLines: 3,
-                          style: GoogleFonts.cairo(fontSize: 13.5, color: const Color(0xFF0F172A)),
-                          decoration: InputDecoration(
-                            hintText: _replyingTo != null
-                                ? (_asOfficeName && _isAdminOrStaff ? 'اكتب رد مكتب علي شوفرليت...' : 'اكتب ردك هنا...')
-                                : (_asOfficeName && _isAdminOrStaff ? 'أضف تعليقاً باسم مكتب علي شوفرليت...' : 'أضف تعليقاً على هذا العرض...'),
-                            hintStyle: GoogleFonts.cairo(fontSize: 12.5, color: const Color(0xFF94A3B8)),
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Admin / Staff checkbox option (only when not editing an existing comment)
+                  if (_isAdminOrStaff && _editingComment == null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: InkWell(
+                        onTap: () => setState(() => _asOfficeName = !_asOfficeName),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: Checkbox(
+                                  value: _asOfficeName,
+                                  onChanged: (val) => setState(() => _asOfficeName = val ?? false),
+                                  activeColor: AppColors.gold,
+                                  checkColor: const Color(0xFF0A192F),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Icon(
+                                _asOfficeName ? IconsaxPlusBold.verify : IconsaxPlusLinear.profile,
+                                size: 14,
+                                color: _asOfficeName ? AppColors.gold : const Color(0xFF64748B),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _replyingTo != null
+                                    ? 'الرد باسم "مكتب علي شوفرليت"'
+                                    : 'التعليق باسم "مكتب علي شوفرليت"',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: _asOfficeName ? const Color(0xFF0A192F) : const Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Container(
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF0A192F),
-                        shape: BoxShape.circle,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            if (!_focusNode.hasFocus) {
+                              _focusNode.requestFocus();
+                            }
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F5F9),
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: TextField(
+                              controller: _textCtrl,
+                              focusNode: _focusNode,
+                              textDirection: TextDirection.rtl,
+                              minLines: 1,
+                              maxLines: 3,
+                              onTap: () {
+                                if (!_focusNode.hasFocus) {
+                                  _focusNode.requestFocus();
+                                }
+                              },
+                              style: GoogleFonts.cairo(fontSize: 13.5, color: const Color(0xFF0F172A)),
+                              decoration: InputDecoration(
+                                hintText: _editingComment != null
+                                    ? 'تعديل التعليق...'
+                                    : _replyingTo != null
+                                        ? (_asOfficeName && _isAdminOrStaff ? 'اكتب رد مكتب علي شوفرليت...' : 'اكتب ردك هنا...')
+                                        : (_asOfficeName && _isAdminOrStaff ? 'أضف تعليقاً باسم مكتب علي شوفرليت...' : 'أضف تعليقاً على هذا العرض...'),
+                                hintStyle: GoogleFonts.cairo(fontSize: 12.5, color: const Color(0xFF94A3B8)),
+                                border: InputBorder.none,
+                                isDense: false,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                      child: IconButton(
-                        onPressed: _isSending ? null : _sendComment,
-                        icon: _isSending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(IconsaxPlusBold.send_1, color: Colors.white, size: 18),
+                      const SizedBox(width: 10),
+                      Container(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF0A192F),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          onPressed: _isSending ? null : _sendComment,
+                          icon: _isSending
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : Icon(
+                                  _editingComment != null ? Icons.check_rounded : IconsaxPlusBold.send_1,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildCommentItem(BannerCommentModel comment, {bool isReply = false}) {
     final canDeleteThis = _canModerate || (_auth.userId != null && _auth.userId == comment.userId);
+    final canEditThis = _auth.userId != null && _auth.userId == comment.userId;
+    final isCurrentlyEditing = _editingComment?.id == comment.id;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -443,10 +622,19 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: comment.isAdminReply ? const Color(0xFFFFFBEB) : const Color(0xFFF8FAFC),
+                      color: isCurrentlyEditing
+                          ? const Color(0xFFEFF6FF)
+                          : comment.isAdminReply
+                              ? const Color(0xFFFFFBEB)
+                              : const Color(0xFFF8FAFC),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: comment.isAdminReply ? AppColors.gold.withValues(alpha: 0.4) : const Color(0xFFE2E8F0),
+                        color: isCurrentlyEditing
+                            ? const Color(0xFF0284C7)
+                            : comment.isAdminReply
+                                ? AppColors.gold.withValues(alpha: 0.4)
+                                : const Color(0xFFE2E8F0),
+                        width: isCurrentlyEditing ? 1.5 : 1.0,
                       ),
                     ),
                     child: Column(
@@ -488,28 +676,43 @@ class _ReelsCommentsSheetState extends State<ReelsCommentsSheet> {
                     ),
                   ),
 
-                  // Actions under comment: Time, Reply, Delete, Block
+                  // Actions under comment: Time, Reply, Edit, Delete, Block
                   Padding(
                     padding: const EdgeInsets.only(top: 4, right: 8),
                     child: Row(
                       children: [
                         Text(
-                          _formatTime(comment.createdAt),
+                          _formatTime(comment.createdAt) + (comment.isEdited ? ' (مُعدَّل)' : ''),
                           style: GoogleFonts.cairo(fontSize: 11, color: const Color(0xFF94A3B8)),
                         ),
                         const SizedBox(width: 12),
                         InkWell(
                           onTap: () {
                             setState(() {
+                              _editingComment = null;
                               _replyingTo = comment;
                             });
-                            _focusNode.requestFocus();
+                            Future.microtask(() => _focusNode.requestFocus());
                           },
                           child: Text(
                             'رد',
                             style: GoogleFonts.cairo(fontSize: 11.5, fontWeight: FontWeight.bold, color: const Color(0xFF0A192F)),
                           ),
                         ),
+                        if (canEditThis) ...[
+                          const SizedBox(width: 12),
+                          InkWell(
+                            onTap: () => _startEditing(comment),
+                            child: Text(
+                              'تعديل',
+                              style: GoogleFonts.cairo(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF0284C7),
+                              ),
+                            ),
+                          ),
+                        ],
                         if (canDeleteThis) ...[
                           const SizedBox(width: 12),
                           InkWell(

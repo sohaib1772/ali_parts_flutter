@@ -79,17 +79,17 @@ class ProductModel {
     }
 
     return ProductModel(
-      id: json['id'] as String,
-      nameAr: json['name_ar'] as String? ?? '',
-      nameEn: json['name_en'] as String?,
-      descriptionAr: json['description_ar'] as String?,
-      oemNumber: json['oem_number'] as String?,
+      id: json['id']?.toString() ?? '',
+      nameAr: json['name_ar']?.toString() ?? '',
+      nameEn: json['name_en']?.toString(),
+      descriptionAr: json['description_ar']?.toString(),
+      oemNumber: json['oem_number']?.toString(),
       priceIqd: (json['price_iqd'] as num?)?.toDouble() ?? 0.0,
       priceUsd: (json['price_usd'] as num?)?.toDouble() ?? 0.0,
       comparePriceIqd: (json['compare_price_iqd'] as num?)?.toDouble(),
       shippingIqd: (json['shipping_iqd'] as num?)?.toDouble(),
       mergeDelivery: json['merge_delivery'] as bool? ?? true,
-      deliveryGroup: json['delivery_group'] as String?,
+      deliveryGroup: json['delivery_group']?.toString(),
       mergeWithGroups: parseStringList(
         json['merge_with_groups'] ?? (json['specs'] is Map ? json['specs']['merge_with_groups'] : null),
       ),
@@ -97,20 +97,20 @@ class ProductModel {
           ((json['specs'] is Map && json['specs']['max_merge_qty'] != null)
               ? (json['specs']['max_merge_qty'] as num?)?.toInt()
               : null),
-      categoryId: json['category_id'] as String?,
-      brandId: json['brand_id'] as String?,
+      categoryId: json['category_id']?.toString(),
+      brandId: json['brand_id']?.toString(),
       compatibleModels: parseStringList(json['compatible_models']),
       images: parseStringList(json['images']),
       inStock: json['in_stock'] as bool? ?? true,
       stockQty: (json['stock_qty'] as num?)?.toInt() ?? 0,
       isFeatured: json['is_featured'] as bool? ?? false,
       isDeal: json['is_deal'] as bool? ?? false,
-      dealExpiresAt: json['deal_expires_at'] as String?,
+      dealExpiresAt: json['deal_expires_at']?.toString(),
       salesCount: (json['sales_count'] as num?)?.toInt() ?? 0,
-      condition: json['condition'] as String? ?? 'new',
+      condition: json['condition']?.toString() ?? 'new',
       hasSideOptions: json['has_side_options'] as bool? ?? true,
-      dialectNames: json['dialect_names'] as String?,
-      createdAt: json['created_at'] as String?,
+      dialectNames: json['dialect_names']?.toString(),
+      createdAt: json['created_at']?.toString(),
       specs: json['specs'] is Map<String, dynamic> ? (json['specs'] as Map<String, dynamic>) : null,
     );
   }

@@ -90,6 +90,10 @@ class ShippingCalculator {
           for (int k = 0; k < it.qty; k++) {
             mergeableLargeUnits.add(_Unit(fee: it.fee, maxQty: cap));
           }
+        } else if (it.maxMergeQty != null && it.maxMergeQty! > 1) {
+          final int parcels = (it.qty / it.maxMergeQty!).ceil();
+          largeIndependentShipping += it.fee * parcels;
+          largeIndependentCount += parcels;
         } else {
           largeIndependentShipping += it.fee * it.qty;
           largeIndependentCount += it.qty;
@@ -133,6 +137,10 @@ class ShippingCalculator {
           for (int k = 0; k < it.qty; k++) {
             mergeableMediumUnits.add(_Unit(fee: it.fee, maxQty: cap));
           }
+        } else if (it.maxMergeQty != null && it.maxMergeQty! > 1) {
+          final int parcels = (it.qty / it.maxMergeQty!).ceil();
+          mediumIndependentShipping += it.fee * parcels;
+          mediumIndependentCount += parcels;
         } else {
           mediumIndependentShipping += it.fee * it.qty;
           mediumIndependentCount += it.qty;
@@ -168,14 +176,30 @@ class ShippingCalculator {
     int unmergedCount = 0;
 
     for (final it in afterMediumAbsorption) {
-      if (it.group == ShippingGroup.small && it.canMerge && it.mergeWith.contains(ShippingGroup.small)) {
-        final int cap = it.maxMergeQty ?? 999999;
-        for (int k = 0; k < it.qty; k++) {
-          mergeableSmallUnits.add(_Unit(fee: it.fee, maxQty: cap));
+      if (it.group == ShippingGroup.small) {
+        if (it.canMerge && it.mergeWith.contains(ShippingGroup.small)) {
+          final int cap = it.maxMergeQty ?? 999999;
+          for (int k = 0; k < it.qty; k++) {
+            mergeableSmallUnits.add(_Unit(fee: it.fee, maxQty: cap));
+          }
+        } else if (it.maxMergeQty != null && it.maxMergeQty! > 1) {
+          final int parcels = (it.qty / it.maxMergeQty!).ceil();
+          unmergedShipping += it.fee * parcels;
+          unmergedCount += parcels;
+        } else {
+          unmergedShipping += it.fee * it.qty;
+          unmergedCount += it.qty;
         }
       } else {
-        unmergedShipping += it.fee * it.qty;
-        unmergedCount += it.qty;
+        // Items without group or unmerged items:
+        if (it.maxMergeQty != null && it.maxMergeQty! > 1) {
+          final int parcels = (it.qty / it.maxMergeQty!).ceil();
+          unmergedShipping += it.fee * parcels;
+          unmergedCount += parcels;
+        } else {
+          unmergedShipping += it.fee * it.qty;
+          unmergedCount += it.qty;
+        }
       }
     }
 

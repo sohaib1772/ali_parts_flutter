@@ -62,8 +62,23 @@ class _ReelsViewState extends State<ReelsView> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused) {
+      controller.setTabVisible(false);
+      // When the user exits the app from Reels, automatically close Reels
+      // so when the app is reopened or resumed, the user always lands on the Home screen (الرئيسية)
+      if (mounted) {
+        if (Get.isBottomSheetOpen == true) Get.back();
+        if (Get.isDialogOpen == true) Get.back();
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        } else {
+          Get.offAllNamed(AppRoutes.mainNav);
+        }
+        if (Get.isRegistered<MainNavController>()) {
+          Get.find<MainNavController>().changeTab(0);
+        }
+      }
+    } else if (state == AppLifecycleState.inactive) {
       controller.setTabVisible(false);
     } else if (state == AppLifecycleState.resumed) {
       controller.setTabVisible(true);
@@ -774,8 +789,8 @@ class _ReelItemCardState extends State<_ReelItemCard>
             },
           ),
 
-          // Play button indicator - shown when video is not playing
-          if (_hasVideo && !_isPlaying && !_isScrubbing)
+          // Play button indicator - shown only when the user manually paused the video
+          if (_hasVideo && _userPaused && !_isPlaying && !_isScrubbing)
             Center(
               child: Container(
                 width: 72,
@@ -885,9 +900,11 @@ class _ReelItemCardState extends State<_ReelItemCard>
                 final isLiked =
                     widget.controller.isLiked[widget.banner.id] ?? false;
                 final likesCount =
-                    widget.controller.likesCount[widget.banner.id] ?? 0;
+                    widget.controller.likesCount[widget.banner.id] ??
+                    widget.banner.totalLikes;
                 final commentsCount =
-                    widget.controller.commentsCount[widget.banner.id] ?? 0;
+                    widget.controller.commentsCount[widget.banner.id] ??
+                    widget.banner.totalComments;
 
                 return Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1273,86 +1290,139 @@ class _ReelItemCardState extends State<_ReelItemCard>
   }
 
   Widget _buildYouTubeLayer() {
-    if (_isYouTubeInitialized && _ytCtrl != null) {
-      final size = MediaQuery.of(context).size;
-      final isShort =
-          widget.banner.videoUrl?.toLowerCase().contains('shorts') == true;
-      final double aspect = isShort && size.height > 0
-          ? (size.width / size.height)
-          : (16 / 9);
+    final isYouTubeReadyToDisplay = _isYouTubeInitialized &&
+        _ytCtrl != null &&
+        _ytCtrl!.value.isReady &&
+        (_isPlaying || _ytCtrl!.value.isPlaying || _ytCtrl!.value.position > Duration.zero || _userPaused);
 
-      return Container(
-        color: Colors.black,
-        alignment: Alignment.center,
-        child: YoutubePlayer(
-          key: ValueKey('yt_${widget.banner.id}_${_youTubeId ?? ""}'),
-          controller: _ytCtrl!,
-          aspectRatio: aspect,
-          showVideoProgressIndicator: false,
-          onReady: () {
-            if (_isActive && !_userPaused) {
-              _pendingPlay = false;
-              _ytCtrl?.play();
-            }
-          },
-          onEnded: (_) {
-            _ytCtrl?.seekTo(Duration.zero);
-            _ytCtrl?.play();
-          },
+    final size = MediaQuery.of(context).size;
+    final isShort =
+        widget.banner.videoUrl?.toLowerCase().contains('shorts') == true;
+    final double aspect = isShort && size.height > 0
+        ? (size.width / size.height)
+        : (16 / 9);
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_isYouTubeInitialized && _ytCtrl != null)
+          Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: YoutubePlayer(
+              key: ValueKey('yt_${widget.banner.id}_${_youTubeId ?? ""}'),
+              controller: _ytCtrl!,
+              aspectRatio: aspect,
+              showVideoProgressIndicator: false,
+              onReady: () {
+                _safeSetState(() {});
+                if (_isActive && !_userPaused) {
+                  _pendingPlay = false;
+                  _ytCtrl?.play();
+                }
+              },
+              onEnded: (_) {
+                _ytCtrl?.seekTo(Duration.zero);
+                _ytCtrl?.play();
+              },
+            ),
+          ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: isYouTubeReadyToDisplay
+              ? const SizedBox.shrink(key: ValueKey('empty_yt_placeholder'))
+              : SizedBox.expand(
+                  key: const ValueKey('yt_thumb_placeholder'),
+                  child: _buildThumbnailPlaceholder(showLoader: _isActive),
+                ),
         ),
-      );
-    }
-
-    return _buildThumbnailPlaceholder();
+      ],
+    );
   }
 
-  Widget _buildThumbnailPlaceholder() {
+  Widget _buildThumbnailPlaceholder({bool showLoader = true}) {
     final videoId = _youTubeId;
-    final thumbUrl = widget.banner.imageUrl.isNotEmpty
-        ? widget.banner.imageUrl
+    final thumbUrl = widget.banner.imageUrl.trim().isNotEmpty
+        ? widget.banner.imageUrl.trim()
         : (videoId != null ? YoutubePlayer.getThumbnail(videoId: videoId) : '');
 
+    Widget imageWidget;
     if (thumbUrl.isEmpty) {
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: AppColors.gold),
-        ),
+      imageWidget = Container(color: Colors.black);
+    } else {
+      imageWidget = CachedNetworkImage(
+        imageUrl: thumbUrl,
+        fit: BoxFit.cover,
+        fadeInDuration: const Duration(milliseconds: 150),
+        placeholder: (_, __) => Container(color: Colors.black),
+        errorWidget: (_, __, ___) => Container(color: Colors.black),
       );
     }
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        CachedNetworkImage(
-          imageUrl: thumbUrl,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => Container(
-            color: Colors.black,
-            child: const Center(
-              child: CircularProgressIndicator(color: AppColors.gold),
+        imageWidget,
+        // Semi-transparent dark overlay to enhance contrast and readability
+        Container(
+          color: Colors.black.withValues(alpha: 0.25),
+        ),
+        if (showLoader && _isActive)
+          Center(
+            child: Container(
+              width: 58,
+              height: 58,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 16,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: const CircularProgressIndicator(
+                strokeWidth: 3.2,
+                color: AppColors.gold,
+              ),
             ),
           ),
-          errorWidget: (_, __, ___) => Container(color: Colors.black),
-        ),
-        if (_isActive)
-          const Center(child: CircularProgressIndicator(color: AppColors.gold)),
       ],
     );
   }
 
   Widget _buildVideoLayer() {
-    if (_isVideoInitialized && _videoCtrl != null) {
-      return Center(
-        child: AspectRatio(
-          aspectRatio: _videoCtrl!.value.aspectRatio,
-          child: VideoPlayer(_videoCtrl!),
-        ),
-      );
-    }
+    final isReadyToDisplay = _isVideoInitialized &&
+        _videoCtrl != null &&
+        (_isPlaying || _videoCtrl!.value.position > Duration.zero || _userPaused);
 
-    return const Center(
-      child: CircularProgressIndicator(color: AppColors.gold),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_isVideoInitialized && _videoCtrl != null)
+          Center(
+            child: AspectRatio(
+              aspectRatio: _videoCtrl!.value.aspectRatio,
+              child: VideoPlayer(_videoCtrl!),
+            ),
+          ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: isReadyToDisplay
+              ? const SizedBox.shrink(key: ValueKey('empty_video_placeholder'))
+              : SizedBox.expand(
+                  key: const ValueKey('video_thumb_placeholder'),
+                  child: _buildThumbnailPlaceholder(showLoader: _isActive),
+                ),
+        ),
+      ],
     );
   }
 

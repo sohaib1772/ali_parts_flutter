@@ -46,6 +46,7 @@ class AuthService extends GetxService {
   String? _lastHandledDeepLink;
   DateTime? _lastDeepLinkTime;
   bool _isNavigatingToReels = false;
+  bool _hasHandledInitialLink = false;
   Completer<bool>? _refreshCompleter;
   static const String _keyCachedProfile = 'cached_user_profile';
 
@@ -91,6 +92,7 @@ class AuthService extends GetxService {
   void _initDeepLinks() {
     _linkSubscription = _appLinks.uriLinkStream.listen(
       (uri) {
+        _hasHandledInitialLink = true;
         AppLogger.d('Received incoming deep link: $uri');
         _handleIncomingRedirect(uri);
       },
@@ -101,7 +103,8 @@ class AuthService extends GetxService {
 
     // Check initial deep link on cold launch
     _appLinks.getInitialLink().then((uri) {
-      if (uri != null) {
+      if (uri != null && !_hasHandledInitialLink) {
+        _hasHandledInitialLink = true;
         AppLogger.d('Received initial launch deep link: $uri');
         _handleIncomingRedirect(uri);
       }

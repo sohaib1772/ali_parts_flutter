@@ -93,7 +93,7 @@ class ProductRepository {
       final response = await _dioClient.dio.get(
         ApiConstants.banners,
         queryParameters: {
-          'select': '*',
+          'select': '*,banner_likes(count),banner_comments(count)',
           'is_active': 'eq.true',
           'order': 'created_at.desc',
         },

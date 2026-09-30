@@ -31,117 +31,6 @@ import '../../../data/repositories/product_repository.dart';
 import '../../home/controllers/home_controller.dart';
 import '../../reels/controllers/reels_controller.dart';
 
-class _AdminProductsPaginationSentinel extends StatefulWidget {
-  final VoidCallback onLoadMore;
-  final bool isLoading;
-  final bool hasError;
-  final VoidCallback onRetry;
-
-  const _AdminProductsPaginationSentinel({
-    required this.onLoadMore,
-    required this.isLoading,
-    required this.hasError,
-    required this.onRetry,
-  });
-
-  @override
-  State<_AdminProductsPaginationSentinel> createState() => _AdminProductsPaginationSentinelState();
-}
-
-class _AdminProductsPaginationSentinelState extends State<_AdminProductsPaginationSentinel> {
-  @override
-  void initState() {
-    super.initState();
-    _triggerIfNeeded();
-  }
-
-  @override
-  void didUpdateWidget(covariant _AdminProductsPaginationSentinel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.isLoading && !widget.hasError) {
-      _triggerIfNeeded();
-    }
-  }
-
-  void _triggerIfNeeded() {
-    if (!widget.isLoading && !widget.hasError) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !widget.isLoading && !widget.hasError) {
-          widget.onLoadMore();
-        }
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.hasError) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: OutlinedButton.icon(
-          onPressed: widget.onRetry,
-          icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFFE11D48)),
-          label: const Text(
-            'حدث خطأ أثناء تحميل المزيد - إضغط لإعادة المحاولة',
-            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFFE11D48)),
-          ),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: Color(0xFFFECDD3)),
-            backgroundColor: const Color(0xFFFFF1F2),
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Center(
-        child: InkWell(
-          onTap: widget.isLoading ? null : widget.onLoadMore,
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFCBD5E1)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.02),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  widget.isLoading ? 'جاري تحميل المزيد من المنتجات...' : 'تحميل المزيد من المنتجات...',
-                  style: const TextStyle(
-                    fontFamily: 'Cairo',
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class AdminView extends StatefulWidget {
   const AdminView({super.key});
 
@@ -162,7 +51,7 @@ class _AdminViewState extends State<AdminView> {
   bool _isLoadingMoreProducts = false;
   bool _hasMoreProducts = true;
   bool _loadMoreProductsError = false;
-  static const int _productsPageSize = 40;
+  static const int _productsPageSize = 30;
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _searchDebounceTimer;
   String _currentProductSearchQuery = '';
@@ -579,9 +468,16 @@ class _AdminViewState extends State<AdminView> {
       );
 
       if ((res.statusCode == 200 || res.statusCode == 206) && res.data is List) {
-        final prods = (res.data as List)
-            .map((e) => ProductModel.fromJson(e as Map<String, dynamic>))
-            .toList();
+        final prods = <ProductModel>[];
+        for (final raw in (res.data as List)) {
+          if (raw is Map<String, dynamic>) {
+            try {
+              prods.add(ProductModel.fromJson(raw));
+            } catch (err) {
+              debugPrint('Failed to parse product in admin: $err');
+            }
+          }
+        }
 
         final range = res.headers.value('content-range');
         int count = prods.length;
@@ -2690,52 +2586,10 @@ class _AdminViewState extends State<AdminView> {
             color: const Color(0xFFF8FAFC),
             child: Column(
               children: [
-                // Top Unified AppHeader with auto back button & Refresh action
-                AppHeaderWidget(
+                // Top Unified AppHeader with auto back button
+                const AppHeaderWidget(
                   title: 'لوحة الإدارة',
                   showBack: true,
-                  customActions: [
-                    InkWell(
-                      onTap: () async {
-                        await _handleRefresh();
-                        Get.snackbar(
-                          'تم التحديث',
-                          'تم تحديث البيانات بنجاح',
-                          snackPosition: SnackPosition.BOTTOM,
-                          duration: const Duration(seconds: 2),
-                          backgroundColor: const Color(0xFF0F172A),
-                          colorText: Colors.white,
-                          margin: const EdgeInsets.all(12),
-                          borderRadius: 12,
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF132B45),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.refresh_rounded, color: AppColors.gold, size: 16),
-                            SizedBox(width: 4),
-                            Text(
-                              'تحديث',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
                 ),
 
                 // Single outer scrollable ListView for the whole page with Pull-to-Refresh!
@@ -2748,256 +2602,36 @@ class _AdminViewState extends State<AdminView> {
                         onRefresh: _handleRefresh,
                         child: NotificationListener<ScrollNotification>(
                           onNotification: _handleScrollNotification,
-                          child: ListView(
+                          child: CustomScrollView(
                             controller: _scrollController,
                             physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-                            padding: const EdgeInsets.fromLTRB(0, 10, 0, 90),
-                            children: [
-                            // 1. Subheader Accordion: صلاحياتي
-                          Builder(builder: (context) {
-                            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
-                            final isCurrentAdmin = auth?.isAdmin.value == true;
-                            final staffPerms = auth?.staffPermissions.value ?? {};
+                            slivers: [
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 10),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      // 1. Subheader Accordion: صلاحياتي
+                                      _buildPermissionsAccordion(),
+                                      const SizedBox(height: 12),
 
-                            int activeCount = 0;
-                            if (isCurrentAdmin) {
-                              activeCount = 5;
-                            } else {
-                              if (staffPerms['can_orders'] == true) activeCount++;
-                              if (staffPerms['can_products'] == true) activeCount++;
-                              if (staffPerms['can_replacements'] == true) activeCount++;
-                              if (staffPerms['can_block'] == true) activeCount++;
-                              if (staffPerms['can_moderate_comments'] == true) activeCount++;
-                            }
-
-                            return Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 16),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(18),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.02),
-                                    blurRadius: 6,
+                                      // 2. Dynamic Tab Grid
+                                      _buildTabsGrid(),
+                                      const SizedBox(height: 14),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              child: Column(
-                                children: [
-                                  InkWell(
-                                    onTap: () => setState(() => _showPermissions = !_showPermissions),
-                                    borderRadius: BorderRadius.circular(18),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Icon(
-                                            _showPermissions ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
-                                            color: const Color(0xFF64748B),
-                                            size: 26,
-                                          ),
-                                          Row(
-                                            children: [
-                                              Text(
-                                                '($activeCount مفعلة)',
-                                                style: const TextStyle(fontSize: 12, color: Color(0xFF0D9488), fontWeight: FontWeight.bold),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Text(
-                                                isCurrentAdmin ? 'صلاحياتي (مدير النظام)' : 'صلاحياتي (موظف)',
-                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              const Icon(IconsaxPlusBold.security_safe, color: Color(0xFF0D9488), size: 20),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-
-                                  if (_showPermissions)
-                                    Container(
-                                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                                      child: Column(
-                                        children: [
-                                          const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                                          const SizedBox(height: 10),
-                                          if (isCurrentAdmin) ...[
-                                            _buildPermissionPill(
-                                              'مدير النظام (👑 كامل الصلاحيات والتحكم)',
-                                              const Color(0xFF1E293B),
-                                              const Color(0xFFF8FAFC),
-                                              const Color(0xFFCBD5E1),
-                                              isActive: true,
-                                            ),
-                                          ] else ...[
-                                            if (staffPerms['can_orders'] == true) ...[
-                                              _buildPermissionPill(
-                                                'الطلبات (can_orders)',
-                                                const Color(0xFF2563EB),
-                                                const Color(0xFFEFF6FF),
-                                                const Color(0xFF93C5FD),
-                                                isActive: true,
-                                              ),
-                                              const SizedBox(height: 6),
-                                            ],
-                                            if (staffPerms['can_products'] == true) ...[
-                                              _buildPermissionPill(
-                                                'المنتجات (can_products)',
-                                                const Color(0xFF059669),
-                                                const Color(0xFFECFDF5),
-                                                const Color(0xFFA7F3D0),
-                                                isActive: true,
-                                              ),
-                                              const SizedBox(height: 6),
-                                            ],
-                                            if (staffPerms['can_replacements'] == true) ...[
-                                              _buildPermissionPill(
-                                                'الاستبدال (can_replacements)',
-                                                const Color(0xFFD97706),
-                                                const Color(0xFFFFFBEB),
-                                                const Color(0xFFFDE68A),
-                                                isActive: true,
-                                              ),
-                                              const SizedBox(height: 6),
-                                            ],
-                                            if (staffPerms['can_block'] == true) ...[
-                                              _buildPermissionPill(
-                                                'حظر المستخدمين (can_block)',
-                                                const Color(0xFFE11D48),
-                                                const Color(0xFFFFF1F2),
-                                                const Color(0xFFFECDD3),
-                                                isActive: true,
-                                              ),
-                                              const SizedBox(height: 6),
-                                            ],
-                                            if (staffPerms['can_moderate_comments'] == true) ...[
-                                              _buildPermissionPill(
-                                                'إدارة التعليقات والعروض (can_moderate_comments)',
-                                                const Color(0xFF7C3AED),
-                                                const Color(0xFFF5F3FF),
-                                                const Color(0xFFDDD6FE),
-                                                isActive: true,
-                                              ),
-                                            ],
-                                            if (activeCount == 0)
-                                              const Padding(
-                                                padding: EdgeInsets.symmetric(vertical: 8),
-                                                child: Text(
-                                                  'لا توجد صلاحيات مفعلة لحسابك حالياً',
-                                                  style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.bold),
-                                                ),
-                                              ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            );
-                          }),
-
-                          const SizedBox(height: 12),
-
-                          // 2. Dynamic Tab Grid
-                          Builder(builder: (context) {
-                            final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
-                            final isCurrentAdmin = auth?.isAdmin.value == true;
-                            final staffPerms = auth?.staffPermissions.value ?? {};
-
-                            final List<Widget> permittedTabButtons = [];
-                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
-                              permittedTabButtons.add(_buildTabButton(0, IconsaxPlusBold.box, IconsaxPlusLinear.box, 'منتجات'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_products'] == true || staffPerms['can_moderate_comments'] == true) {
-                              permittedTabButtons.add(_buildTabButton(3, IconsaxPlusBold.gallery, IconsaxPlusLinear.gallery, 'عروض'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
-                              permittedTabButtons.add(_buildTabButton(2, IconsaxPlusBold.tag, IconsaxPlusLinear.tag, 'تصنيفات'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_orders'] == true) {
-                              permittedTabButtons.add(_buildTabButton(1, IconsaxPlusBold.clipboard_text, IconsaxPlusLinear.clipboard_text, 'طلبات'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_replacements'] == true) {
-                              permittedTabButtons.add(_buildTabButton(7, IconsaxPlusBold.convert, IconsaxPlusLinear.convert, 'استبدال'));
-                            }
-                            if (isCurrentAdmin) {
-                              permittedTabButtons.add(_buildTabButton(6, IconsaxPlusBold.profile_2user, IconsaxPlusLinear.profile_2user, 'مستخدمون'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_block'] == true) {
-                              permittedTabButtons.add(_buildTabButton(5, IconsaxPlusBold.user_remove, IconsaxPlusLinear.user_remove, 'سجل الحظر'));
-                            }
-                            if (isCurrentAdmin || staffPerms['can_products'] == true) {
-                              permittedTabButtons.add(_buildTabButton(4, IconsaxPlusBold.archive_book, IconsaxPlusLinear.archive_book, 'سجل المخزون'));
-                            }
-                            if (isCurrentAdmin) {
-                              permittedTabButtons.add(_buildTabButton(11, IconsaxPlusBold.notification_bing, IconsaxPlusLinear.notification_bing, 'إشعار جماعي'));
-                              permittedTabButtons.add(_buildTabButton(10, IconsaxPlusBold.setting_2, IconsaxPlusLinear.setting_2, 'إعدادات'));
-                              permittedTabButtons.add(_buildTabButton(9, IconsaxPlusBold.status_up, IconsaxPlusLinear.status_up, 'تشخيص'));
-                              permittedTabButtons.add(_buildTabButton(8, IconsaxPlusBold.key, IconsaxPlusLinear.key, 'سجل OTP'));
-                            }
-
-                            if (permittedTabButtons.isEmpty) {
-                              return Container(
-                                margin: const EdgeInsets.symmetric(horizontal: 16),
-                                padding: const EdgeInsets.all(24),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: const Color(0xFFE2E8F0)),
                                 ),
-                                child: const Column(
-                                  children: [
-                                    Icon(IconsaxPlusBold.shield_cross, size: 40, color: Color(0xFFE11D48)),
-                                    SizedBox(height: 10),
-                                    Text(
-                                      'لا تملك صلاحيات كافية للوصول إلى أقسام لوحة الإدارة',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
-                                    ),
-                                    SizedBox(height: 6),
-                                    Text(
-                                      'يرجى مراجعة مدير النظام لتفعيل الصلاحيات المطلوبة لحسابك.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            final crossCount = permittedTabButtons.length < 4 ? permittedTabButtons.length : 4;
-
-                            return Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 16),
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF1F5F9),
-                                borderRadius: BorderRadius.circular(20),
                               ),
-                              child: GridView.count(
-                                crossAxisCount: crossCount,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                crossAxisSpacing: 6,
-                                mainAxisSpacing: 6,
-                                childAspectRatio: 1.1,
-                                children: permittedTabButtons,
+
+                              // 3. Tab Content Slivers (Lazy virtualized for products, BoxAdapter for others)
+                              ..._buildActiveTabSlivers(),
+
+                              const SliverToBoxAdapter(
+                                child: SizedBox(height: 90),
                               ),
-                            );
-                          }),
-
-                          const SizedBox(height: 14),
-
-                          // 3. Tab Content
-                          _buildActiveTabContent(),
-
-                          const SizedBox(height: 30),
-                        ],
-                      ),
+                            ],
+                          ),
                     ),
                   ),
 
@@ -3026,6 +2660,238 @@ class _AdminViewState extends State<AdminView> {
 ),
 );
 }
+
+  Widget _buildPermissionsAccordion() {
+    final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+    final isCurrentAdmin = auth?.isAdmin.value == true;
+    final staffPerms = auth?.staffPermissions.value ?? {};
+
+    int activeCount = 0;
+    if (isCurrentAdmin) {
+      activeCount = 5;
+    } else {
+      if (staffPerms['can_orders'] == true) activeCount++;
+      if (staffPerms['can_products'] == true) activeCount++;
+      if (staffPerms['can_replacements'] == true) activeCount++;
+      if (staffPerms['can_block'] == true) activeCount++;
+      if (staffPerms['can_moderate_comments'] == true) activeCount++;
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _showPermissions = !_showPermissions),
+            borderRadius: BorderRadius.circular(18),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Icon(
+                    _showPermissions ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
+                    color: const Color(0xFF64748B),
+                    size: 26,
+                  ),
+                  Row(
+                    children: [
+                      Text(
+                        '($activeCount مفعلة)',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF0D9488), fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        isCurrentAdmin ? 'صلاحياتي (مدير النظام)' : 'صلاحياتي (موظف)',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(IconsaxPlusBold.security_safe, color: Color(0xFF0D9488), size: 20),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_showPermissions)
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: Column(
+                children: [
+                  const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                  const SizedBox(height: 10),
+                  if (isCurrentAdmin) ...[
+                    _buildPermissionPill(
+                      'مدير النظام (👑 كامل الصلاحيات والتحكم)',
+                      const Color(0xFF1E293B),
+                      const Color(0xFFF8FAFC),
+                      const Color(0xFFCBD5E1),
+                      isActive: true,
+                    ),
+                  ] else ...[
+                    if (staffPerms['can_orders'] == true) ...[
+                      _buildPermissionPill(
+                        'الطلبات (can_orders)',
+                        const Color(0xFF2563EB),
+                        const Color(0xFFEFF6FF),
+                        const Color(0xFF93C5FD),
+                        isActive: true,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    if (staffPerms['can_products'] == true) ...[
+                      _buildPermissionPill(
+                        'المنتجات (can_products)',
+                        const Color(0xFF059669),
+                        const Color(0xFFECFDF5),
+                        const Color(0xFFA7F3D0),
+                        isActive: true,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    if (staffPerms['can_replacements'] == true) ...[
+                      _buildPermissionPill(
+                        'الاستبدال (can_replacements)',
+                        const Color(0xFFD97706),
+                        const Color(0xFFFFFBEB),
+                        const Color(0xFFFDE68A),
+                        isActive: true,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    if (staffPerms['can_block'] == true) ...[
+                      _buildPermissionPill(
+                        'حظر المستخدمين (can_block)',
+                        const Color(0xFFE11D48),
+                        const Color(0xFFFFF1F2),
+                        const Color(0xFFFECDD3),
+                        isActive: true,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    if (staffPerms['can_moderate_comments'] == true) ...[
+                      _buildPermissionPill(
+                        'إدارة التعليقات والعروض (can_moderate_comments)',
+                        const Color(0xFF7C3AED),
+                        const Color(0xFFF5F3FF),
+                        const Color(0xFFDDD6FE),
+                        isActive: true,
+                      ),
+                    ],
+                    if (activeCount == 0)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          'لا توجد صلاحيات مفعلة لحسابك حالياً',
+                          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabsGrid() {
+    final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+    final isCurrentAdmin = auth?.isAdmin.value == true;
+    final staffPerms = auth?.staffPermissions.value ?? {};
+
+    final List<Widget> permittedTabButtons = [];
+    if (isCurrentAdmin || staffPerms['can_products'] == true) {
+      permittedTabButtons.add(_buildTabButton(0, IconsaxPlusBold.box, IconsaxPlusLinear.box, 'منتجات'));
+    }
+    if (isCurrentAdmin || staffPerms['can_products'] == true || staffPerms['can_moderate_comments'] == true) {
+      permittedTabButtons.add(_buildTabButton(3, IconsaxPlusBold.gallery, IconsaxPlusLinear.gallery, 'عروض'));
+    }
+    if (isCurrentAdmin || staffPerms['can_products'] == true) {
+      permittedTabButtons.add(_buildTabButton(2, IconsaxPlusBold.tag, IconsaxPlusLinear.tag, 'تصنيفات'));
+    }
+    if (isCurrentAdmin || staffPerms['can_orders'] == true) {
+      permittedTabButtons.add(_buildTabButton(1, IconsaxPlusBold.clipboard_text, IconsaxPlusLinear.clipboard_text, 'طلبات'));
+    }
+    if (isCurrentAdmin || staffPerms['can_replacements'] == true) {
+      permittedTabButtons.add(_buildTabButton(7, IconsaxPlusBold.convert, IconsaxPlusLinear.convert, 'استبدال'));
+    }
+    if (isCurrentAdmin) {
+      permittedTabButtons.add(_buildTabButton(6, IconsaxPlusBold.profile_2user, IconsaxPlusLinear.profile_2user, 'مستخدمون'));
+    }
+    if (isCurrentAdmin || staffPerms['can_block'] == true) {
+      permittedTabButtons.add(_buildTabButton(5, IconsaxPlusBold.user_remove, IconsaxPlusLinear.user_remove, 'سجل الحظر'));
+    }
+    if (isCurrentAdmin || staffPerms['can_products'] == true) {
+      permittedTabButtons.add(_buildTabButton(4, IconsaxPlusBold.archive_book, IconsaxPlusLinear.archive_book, 'سجل المخزون'));
+    }
+    if (isCurrentAdmin) {
+      permittedTabButtons.add(_buildTabButton(11, IconsaxPlusBold.notification_bing, IconsaxPlusLinear.notification_bing, 'إشعار جماعي'));
+      permittedTabButtons.add(_buildTabButton(10, IconsaxPlusBold.setting_2, IconsaxPlusLinear.setting_2, 'إعدادات'));
+      permittedTabButtons.add(_buildTabButton(9, IconsaxPlusBold.status_up, IconsaxPlusLinear.status_up, 'تشخيص'));
+      permittedTabButtons.add(_buildTabButton(8, IconsaxPlusBold.key, IconsaxPlusLinear.key, 'سجل OTP'));
+    }
+
+    if (permittedTabButtons.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: const Column(
+          children: [
+            Icon(IconsaxPlusBold.shield_cross, size: 40, color: Color(0xFFE11D48)),
+            SizedBox(height: 10),
+            Text(
+              'لا تملك صلاحيات كافية للوصول إلى أقسام لوحة الإدارة',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'يرجى مراجعة مدير النظام لتفعيل الصلاحيات المطلوبة لحسابك.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final crossCount = permittedTabButtons.length < 4 ? permittedTabButtons.length : 4;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: GridView.count(
+        crossAxisCount: crossCount,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1.1,
+        children: permittedTabButtons,
+      ),
+    );
+  }
 
   Widget _buildPermissionPill(String title, Color textColor, Color bgColor, Color borderColor, {bool isActive = true}) {
     if (!isActive) {
@@ -3747,6 +3613,30 @@ class _AdminViewState extends State<AdminView> {
     );
   }
 
+  List<Widget> _buildActiveTabSlivers() {
+    final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
+    final isCurrentAdmin = auth?.isAdmin.value == true;
+    final staffPerms = auth?.staffPermissions.value ?? {};
+
+    if (!_isTabPermitted(_selectedTab, isCurrentAdmin, staffPerms)) {
+      return [
+        SliverToBoxAdapter(
+          child: _buildActiveTabContent(),
+        ),
+      ];
+    }
+
+    if (_selectedTab == 0) {
+      return _buildProductsTabSlivers();
+    }
+
+    return [
+      SliverToBoxAdapter(
+        child: _buildActiveTabContent(),
+      ),
+    ];
+  }
+
   Widget _buildActiveTabContent() {
     final auth = Get.isRegistered<AuthService>() ? Get.find<AuthService>() : null;
     final isCurrentAdmin = auth?.isAdmin.value == true;
@@ -4151,9 +4041,228 @@ class _AdminViewState extends State<AdminView> {
     );
   }
 
-  Widget _buildProductsTab() {
+  Widget _buildProductCard(ProductModel prod) {
+    final hasImage = prod.mainImage.isNotEmpty;
+    final usdPrice = prod.priceUsd > 0
+        ? prod.priceUsd
+        : (prod.priceIqd / _settings.usdExchangeRate);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: hasImage
+                ? CachedNetworkImage(
+                    imageUrl: Formatters.thumbUrl(prod.mainImage, width: 200, quality: 75),
+                    memCacheWidth: 160,
+                    memCacheHeight: 160,
+                    maxWidthDiskCache: 300,
+                    maxHeightDiskCache: 300,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const Center(
+                      child: Icon(Icons.image_not_supported_outlined, color: Color(0xFF94A3B8), size: 24),
+                    ),
+                  )
+                : const Center(
+                    child: Icon(Icons.image_outlined, color: Color(0xFF94A3B8), size: 28),
+                  ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  prod.nameAr,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  children: [
+                    Text(
+                      '\$${usdPrice.toStringAsFixed(2)}',
+                      style: const TextStyle(color: Color(0xFFD97706), fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                    const Text('≈', style: TextStyle(color: Color(0xFF64748B), fontSize: 11)),
+                    Text(
+                      Formatters.formatIQD(prod.priceIqd),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F172A)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  prod.inStock ? 'متوفر · ${prod.stockQty} قطعة' : 'نفذت الكمية',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: prod.inStock ? const Color(0xFF0D9488) : const Color(0xFFDC2626),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              InkWell(
+                onTap: () => _showAddEditProductDialog(product: prod),
+                borderRadius: BorderRadius.circular(8),
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
+                ),
+              ),
+              const SizedBox(height: 4),
+              InkWell(
+                onTap: () => _deleteProduct(prod),
+                borderRadius: BorderRadius.circular(8),
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductsPaginationFooter() {
+    if (_isLoadingMoreProducts) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2.2, color: AppColors.gold),
+              ),
+              SizedBox(width: 10),
+              Text(
+                'جاري تحميل المزيد من المنتجات...',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_loadMoreProductsError) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: OutlinedButton.icon(
+          onPressed: _loadMoreProducts,
+          icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFFE11D48)),
+          label: const Text(
+            'حدث خطأ أثناء تحميل المزيد - إضغط لإعادة المحاولة',
+            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFFE11D48)),
+          ),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: Color(0xFFFECDD3)),
+            backgroundColor: const Color(0xFFFFF1F2),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    if (_hasMoreProducts && _products.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Center(
+          child: InkWell(
+            onTap: _loadMoreProducts,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.02),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(IconsaxPlusLinear.arrow_down_1, size: 16, color: Color(0xFF0F172A)),
+                  SizedBox(width: 8),
+                  Text(
+                    'تحميل المزيد من المنتجات...',
+                    style: TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!_hasMoreProducts && _products.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Text(
+            'تم عرض جميع المنتجات ✓ (${_totalProducts > 0 ? _totalProducts : _products.length} منتج)',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
+          ),
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildProductSearchHeader() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -4164,40 +4273,6 @@ class _AdminViewState extends State<AdminView> {
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
               ),
               const Spacer(),
-              // زر تحديث المنتجات
-              OutlinedButton.icon(
-                onPressed: _isLoadingProducts
-                    ? null
-                    : () async {
-                        await _loadProducts(isRefresh: true);
-                        Get.snackbar(
-                          'تم التحديث',
-                          'تم تحديث قائمة المنتجات بنجاح',
-                          snackPosition: SnackPosition.BOTTOM,
-                          duration: const Duration(seconds: 2),
-                          backgroundColor: const Color(0xFF0F172A),
-                          colorText: Colors.white,
-                          margin: const EdgeInsets.all(12),
-                          borderRadius: 12,
-                        );
-                      },
-                icon: _isLoadingProducts
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0A192F)),
-                      )
-                    : const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('تحديث', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF0A192F),
-                  side: const BorderSide(color: Color(0xFFCBD5E1)),
-                  backgroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(width: 8),
               ElevatedButton.icon(
                 onPressed: () => _showAddEditProductDialog(),
                 icon: const Icon(IconsaxPlusBold.add, size: 16),
@@ -4243,6 +4318,64 @@ class _AdminViewState extends State<AdminView> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  List<Widget> _buildProductsTabSlivers() {
+    final slivers = <Widget>[
+      SliverToBoxAdapter(
+        child: _buildProductSearchHeader(),
+      ),
+    ];
+
+    if (_isLoadingProducts) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: CircularProgressIndicator(color: AppColors.gold)),
+          ),
+        ),
+      );
+    } else if (_products.isEmpty) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: Text('لا توجد منتجات مطابقة للبحث', style: TextStyle(color: Color(0xFF64748B)))),
+          ),
+        ),
+      );
+    } else {
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          sliver: SliverList.separated(
+            itemCount: _products.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              return _buildProductCard(_products[index]);
+            },
+          ),
+        ),
+      );
+
+      slivers.add(
+        SliverToBoxAdapter(
+          child: _buildProductsPaginationFooter(),
+        ),
+      );
+    }
+
+    return slivers;
+  }
+
+  Widget _buildProductsTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildProductSearchHeader(),
         if (_isLoadingProducts)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 40),
@@ -4261,130 +4394,10 @@ class _AdminViewState extends State<AdminView> {
             itemCount: _products.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (context, index) {
-              final prod = _products[index];
-              final hasImage = prod.mainImage.isNotEmpty;
-              final usdPrice = prod.priceUsd > 0
-                  ? prod.priceUsd
-                  : (prod.priceIqd / _settings.usdExchangeRate);
-
-              return Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 6,
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: hasImage
-                          ? CachedNetworkImage(
-                              imageUrl: prod.mainImage,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => const Center(
-                                child: Icon(Icons.image_not_supported_outlined, color: Color(0xFF94A3B8), size: 24),
-                              ),
-                            )
-                          : const Center(
-                              child: Icon(Icons.image_outlined, color: Color(0xFF94A3B8), size: 28),
-                            ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            prod.nameAr,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
-                          ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            spacing: 4,
-                            children: [
-                              Text(
-                                '\$${usdPrice.toStringAsFixed(2)}',
-                                style: const TextStyle(color: Color(0xFFD97706), fontWeight: FontWeight.bold, fontSize: 12),
-                              ),
-                              const Text('≈', style: TextStyle(color: Color(0xFF64748B), fontSize: 11)),
-                              Text(
-                                Formatters.formatIQD(prod.priceIqd),
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F172A)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            prod.inStock ? 'متوفر · ${prod.stockQty} قطعة' : 'نفذت الكمية',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: prod.inStock ? const Color(0xFF0D9488) : const Color(0xFFDC2626),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        InkWell(
-                          onTap: () => _showAddEditProductDialog(product: prod),
-                          borderRadius: BorderRadius.circular(8),
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(IconsaxPlusBold.edit_2, color: Color(0xFF0F172A), size: 18),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        InkWell(
-                          onTap: () => _deleteProduct(prod),
-                          borderRadius: BorderRadius.circular(8),
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(IconsaxPlusBold.trash, color: Color(0xFFDC2626), size: 18),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
+              return _buildProductCard(_products[index]);
             },
           ),
-        if (_hasMoreProducts && _products.isNotEmpty)
-          _AdminProductsPaginationSentinel(
-            isLoading: _isLoadingMoreProducts,
-            hasError: _loadMoreProductsError,
-            onLoadMore: _loadMoreProducts,
-            onRetry: _loadMoreProducts,
-          )
-        else if (!_hasMoreProducts && _products.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Center(
-              child: Text(
-                'تم عرض جميع المنتجات ✓ (${_totalProducts > 0 ? _totalProducts : _products.length} منتج)',
-                style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontFamily: 'Cairo'),
-              ),
-            ),
-          ),
+        _buildProductsPaginationFooter(),
       ],
     );
   }
@@ -4725,73 +4738,29 @@ class _AdminViewState extends State<AdminView> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoadingOrders
-                        ? null
-                        : () async {
-                            await _loadOrders(silent: true);
-                            Get.snackbar(
-                              'تم التحديث',
-                              'تم تحديث قائمة الطلبات بنجاح',
-                              snackPosition: SnackPosition.BOTTOM,
-                              duration: const Duration(seconds: 2),
-                              backgroundColor: const Color(0xFF0F172A),
-                              colorText: Colors.white,
-                              margin: const EdgeInsets.all(12),
-                              borderRadius: 12,
-                            );
-                          },
-                    icon: _isLoadingOrders
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F172A)),
-                          )
-                        : const Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF0F172A)),
-                    label: const FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        'تحديث الطلبات',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFCBD5E1)),
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                    ),
+            if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _showArchiveAllOrdersDialog,
+                  icon: const Icon(Icons.archive_outlined, size: 16, color: Color(0xFFDC2626)),
+                  label: const Text(
+                    'أرشفة جميع الطلبات',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFFECDD3)),
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   ),
                 ),
-                if (Get.isRegistered<AuthService>() && Get.find<AuthService>().isAdmin.value) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _showArchiveAllOrdersDialog,
-                      icon: const Icon(Icons.archive_outlined, size: 16, color: Color(0xFFDC2626)),
-                      label: const FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          'أرشفة جميع الطلبات',
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFFECDD3)),
-                        backgroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 12),
+              ),
+              const SizedBox(height: 12),
+            ] else ...[
+              const SizedBox(height: 12),
+            ],
           ],
 
           // 3. Orders List or Informative Empty State
@@ -4849,23 +4818,6 @@ class _AdminViewState extends State<AdminView> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _loadOrders(),
-                      icon: const Icon(Icons.refresh_rounded, size: 18, color: Color(0xFF0F172A)),
-                      label: const Text(
-                        'تحديث الطلبات',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        side: const BorderSide(color: Color(0xFFCBD5E1)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             )
@@ -4873,17 +4825,7 @@ class _AdminViewState extends State<AdminView> {
             Container(
               padding: const EdgeInsets.symmetric(vertical: 40),
               alignment: Alignment.center,
-              child: Column(
-                children: [
-                  const Text('لا توجد طلبات تطابق هذا الفلتر', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  TextButton.icon(
-                    onPressed: () => _loadOrders(),
-                    icon: const Icon(Icons.refresh_rounded, size: 16),
-                    label: const Text('تحديث القائمة'),
-                  ),
-                ],
-              ),
+              child: const Text('لا توجد طلبات تطابق هذا الفلتر', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
             )
           else
             ...filtered.map((o) => _buildOrderAdminCard(o)),
@@ -9190,18 +9132,6 @@ class _AdminViewState extends State<AdminView> {
                       ),
                     ),
                   ),
-                  TextButton(
-                    onPressed: _loadUsers,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      'تحديث',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFD97706)),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -10942,7 +10872,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                         ),
                         const SizedBox(height: 2),
                         const Text(
-                          'أقصى عدد قطع تندمج في طرد واحد بسعر توصيل واحد (مثال: اكتب 2 للدعامية، أو اتركه فارغاً لدمج غير محدود):',
+                          'أقصى عدد قطع تندمج معاً في توصيل واحد (مثال: إذا كتبت 2، فكل قطعتين تندمج بتوصيل واحد، والقطعة الثالثة تبدأ توصيلاً جديداً. اتركه فارغاً لدمج غير محدود):',
                           style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B), height: 1.3),
                         ),
                         const SizedBox(height: 6),

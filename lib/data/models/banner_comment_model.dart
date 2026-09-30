@@ -8,6 +8,7 @@ class BannerCommentModel {
   final String? parentId;
   final bool isAdminReply;
   final String createdAt;
+  final String? updatedAt;
   final bool isBlocked;
   final List<BannerCommentModel> replies;
 
@@ -21,9 +22,21 @@ class BannerCommentModel {
     this.parentId,
     this.isAdminReply = false,
     required this.createdAt,
+    this.updatedAt,
     this.isBlocked = false,
     List<BannerCommentModel>? replies,
   }) : replies = replies ?? [];
+
+  bool get isEdited {
+    if (updatedAt == null || updatedAt!.isEmpty) return false;
+    try {
+      final c = DateTime.parse(createdAt);
+      final u = DateTime.parse(updatedAt!);
+      return u.difference(c).inSeconds > 2;
+    } catch (_) {
+      return false;
+    }
+  }
 
   factory BannerCommentModel.fromJson(Map<String, dynamic> json) {
     String name = 'مستخدم';
@@ -55,11 +68,14 @@ class BannerCommentModel {
       parentId: json['parent_id']?.toString(),
       isAdminReply: json['is_admin_reply'] == true || json['is_admin_reply'] == 1,
       createdAt: json['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+      updatedAt: json['updated_at']?.toString(),
       isBlocked: blocked,
     );
   }
 
   BannerCommentModel copyWith({
+    String? content,
+    String? updatedAt,
     List<BannerCommentModel>? replies,
   }) {
     return BannerCommentModel(
@@ -68,10 +84,11 @@ class BannerCommentModel {
       userId: userId,
       userName: userName,
       userAvatar: userAvatar,
-      content: content,
+      content: content ?? this.content,
       parentId: parentId,
       isAdminReply: isAdminReply,
       createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
       isBlocked: isBlocked,
       replies: replies ?? this.replies,
     );

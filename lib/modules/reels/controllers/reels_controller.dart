@@ -78,10 +78,9 @@ class ReelsController extends GetxController {
           currentIndex.value = target;
         }
       }
-      for (final banner in banners) {
-        viewsCount[banner.id] ??= banner.totalViews;
-        loadBannerStats(banner.id);
-      }
+      _applyInitialBannerStats();
+      _fetchUserLikesForBanners();
+      _prefetchStatsForCurrentAndAdjacent(currentIndex.value);
       if (banners.isNotEmpty && currentIndex.value < banners.length) {
         recordView(banners[currentIndex.value].id);
       }
@@ -123,10 +122,9 @@ class ReelsController extends GetxController {
           currentIndex.value = (banners.length - 1).clamp(0, 999);
         }
 
-        for (final banner in banners) {
-          viewsCount[banner.id] ??= banner.totalViews;
-          loadBannerStats(banner.id);
-        }
+        _applyInitialBannerStats();
+        _fetchUserLikesForBanners();
+        _prefetchStatsForCurrentAndAdjacent(currentIndex.value);
         if (banners.isNotEmpty && currentIndex.value < banners.length) {
           recordView(banners[currentIndex.value].id);
         }
@@ -151,13 +149,9 @@ class ReelsController extends GetxController {
         }
       }
 
-      // Pre-load likes & comments for all loaded banners
-      for (final banner in banners) {
-        _safeNotify(() {
-          viewsCount[banner.id] ??= banner.totalViews;
-        });
-        loadBannerStats(banner.id);
-      }
+      _applyInitialBannerStats();
+      _fetchUserLikesForBanners();
+      _prefetchStatsForCurrentAndAdjacent(currentIndex.value);
 
       if (banners.isNotEmpty && currentIndex.value < banners.length) {
         recordView(banners[currentIndex.value].id);
@@ -167,21 +161,65 @@ class ReelsController extends GetxController {
     }
   }
 
-  Future<void> loadBannerStats(String bannerId) async {
+  /// Instantly seed likes, comments, and views from cached BannerModel so UI renders immediately
+  void _applyInitialBannerStats() {
+    for (final banner in banners) {
+      viewsCount[banner.id] ??= banner.totalViews;
+      likesCount[banner.id] ??= banner.totalLikes;
+      commentsCount[banner.id] ??= banner.totalComments;
+    }
+  }
+
+  /// Single-query batch fetch to know every banner the user liked
+  Future<void> _fetchUserLikesForBanners() async {
     final uid = _authService.userId;
-    final likesData = await _reelsRepo.fetchLikes(bannerId, uid);
-    final count = await _reelsRepo.fetchCommentsCount(bannerId);
+    if (uid == null || uid.isEmpty) return;
+    try {
+      final likedIds = await _reelsRepo.fetchUserLikedBannerIds(uid);
+      _safeNotify(() {
+        for (final banner in banners) {
+          isLiked[banner.id] = likedIds.contains(banner.id);
+        }
+      });
+    } catch (_) {}
+  }
 
-    final banner = banners.firstWhereOrNull((b) => b.id == bannerId);
-    final manualLikes = banner?.manualLikesCount ?? 0;
-    final baseViews = viewsCount[bannerId] ?? (banner?.totalViews ?? 0);
+  /// Prefetch stats for current video and adjacent next/prev videos without flooding the network
+  void _prefetchStatsForCurrentAndAdjacent(int index) {
+    if (banners.isEmpty) return;
+    if (index >= 0 && index < banners.length) {
+      loadBannerStats(banners[index].id);
+    }
+    if (index + 1 < banners.length) {
+      loadBannerStats(banners[index + 1].id);
+    }
+    if (index - 1 >= 0) {
+      loadBannerStats(banners[index - 1].id);
+    }
+  }
 
-    _safeNotify(() {
-      likesCount[bannerId] = likesData.count + manualLikes;
-      isLiked[bannerId] = likesData.isLiked;
-      commentsCount[bannerId] = count;
-      viewsCount[bannerId] = baseViews;
-    });
+  Future<void> loadBannerStats(String bannerId) async {
+    if (bannerId.trim().isEmpty) return;
+    final uid = _authService.userId;
+    try {
+      final results = await Future.wait([
+        _reelsRepo.fetchLikes(bannerId, uid),
+        _reelsRepo.fetchCommentsCount(bannerId),
+      ]);
+      final likesData = results[0] as ReelLikesData;
+      final count = results[1] as int;
+
+      final banner = banners.firstWhereOrNull((b) => b.id == bannerId);
+      final manualLikes = banner?.manualLikesCount ?? 0;
+      final baseViews = viewsCount[bannerId] ?? (banner?.totalViews ?? 0);
+
+      _safeNotify(() {
+        likesCount[bannerId] = likesData.count + manualLikes;
+        isLiked[bannerId] = likesData.isLiked;
+        commentsCount[bannerId] = count;
+        viewsCount[bannerId] = baseViews;
+      });
+    } catch (_) {}
   }
 
   /// Record an automatic view for each view / scroll
@@ -199,8 +237,8 @@ class ReelsController extends GetxController {
     });
     if (index >= 0 && index < banners.length) {
       final bannerId = banners[index].id;
-      loadBannerStats(bannerId);
       recordView(bannerId);
+      _prefetchStatsForCurrentAndAdjacent(index);
     }
   }
 

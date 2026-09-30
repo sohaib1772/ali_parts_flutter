@@ -135,5 +135,59 @@ void main() {
       expect(ShippingCalculator.computeShipping(items), 75000.0);
       expect(ShippingCalculator.shipmentCount(items), 2);
     });
+
+    test('منتج مع maxMergeQty = 2 بدون دمج مع منتجات أخرى (mergeWith فارغ): كل 2 يندمجون مع بعض بتوصيل واحد', () {
+      CartItemModel makeItemNoMergeWith(int qty) =>
+          makeItem(id: 'item_self_merge', fee: 20000, qty: qty, group: 'large', mergeWith: [], maxMerge: 2);
+
+      // 1 قطعة = توصيل واحد (20 ألف)
+      expect(ShippingCalculator.computeShipping([makeItemNoMergeWith(1)]), 20000.0);
+      expect(ShippingCalculator.shipmentCount([makeItemNoMergeWith(1)]), 1);
+
+      // 2 قطع = توصيل واحد (20 ألف) -> اندماج القطعتين
+      expect(ShippingCalculator.computeShipping([makeItemNoMergeWith(2)]), 20000.0);
+      expect(ShippingCalculator.shipmentCount([makeItemNoMergeWith(2)]), 1);
+
+      // 3 قطع = توصيلين (40 ألف) -> 2 في طرد + 1 في طرد
+      expect(ShippingCalculator.computeShipping([makeItemNoMergeWith(3)]), 40000.0);
+      expect(ShippingCalculator.shipmentCount([makeItemNoMergeWith(3)]), 2);
+
+      // 4 قطع = توصيلين (40 ألف) -> 2 في طرد + 2 في طرد
+      expect(ShippingCalculator.computeShipping([makeItemNoMergeWith(4)]), 40000.0);
+      expect(ShippingCalculator.shipmentCount([makeItemNoMergeWith(4)]), 2);
+
+      // 5 قطع = 3 توصيلات (60 ألف) -> 2 + 2 + 1
+      expect(ShippingCalculator.computeShipping([makeItemNoMergeWith(5)]), 60000.0);
+      expect(ShippingCalculator.shipmentCount([makeItemNoMergeWith(5)]), 3);
+    });
+
+    test('منتج مع maxMergeQty = 3: كل 3 قطع تندمج في توصيل واحد', () {
+      CartItemModel makeItem3(int qty) =>
+          makeItem(id: 'item_3', fee: 10000, qty: qty, group: 'medium', maxMerge: 3);
+
+      // 1 قطعة = 10k (1)
+      expect(ShippingCalculator.computeShipping([makeItem3(1)]), 10000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(1)]), 1);
+
+      // 2 قطع = 10k (1)
+      expect(ShippingCalculator.computeShipping([makeItem3(2)]), 10000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(2)]), 1);
+
+      // 3 قطع = 10k (1) -> كل 3 يندمجون في توصيل واحد
+      expect(ShippingCalculator.computeShipping([makeItem3(3)]), 10000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(3)]), 1);
+
+      // 4 قطع = 20k (2) -> 3 في طرد + 1 في طرد
+      expect(ShippingCalculator.computeShipping([makeItem3(4)]), 20000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(4)]), 2);
+
+      // 6 قطع = 20k (2) -> 3 في طرد + 3 في طرد
+      expect(ShippingCalculator.computeShipping([makeItem3(6)]), 20000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(6)]), 2);
+
+      // 7 قطع = 30k (3) -> 3 + 3 + 1
+      expect(ShippingCalculator.computeShipping([makeItem3(7)]), 30000.0);
+      expect(ShippingCalculator.shipmentCount([makeItem3(7)]), 3);
+    });
   });
 }
