@@ -12,6 +12,8 @@ void main() {
     List<String> mergeWith = const [],
     int? maxMerge,
     bool merge = true,
+    String? side,
+    bool hasSideOptions = true,
   }) {
     final product = ProductModel(
       id: id,
@@ -22,12 +24,14 @@ void main() {
       mergeWithGroups: mergeWith,
       maxMergeQty: maxMerge,
       mergeDelivery: merge,
+      hasSideOptions: hasSideOptions,
     );
     return CartItemModel(
       id: 'cart_$id',
       userId: 'user_1',
       productId: id,
       quantity: qty,
+      side: side,
       product: product,
     );
   }
@@ -188,6 +192,80 @@ void main() {
       // 7 قطع = 30k (3) -> 3 + 3 + 1
       expect(ShippingCalculator.computeShipping([makeItem3(7)]), 30000.0);
       expect(ShippingCalculator.shipmentCount([makeItem3(7)]), 3);
+    });
+
+    test('قطعة تخم (PAIR) لا تندمج (أو maxMergeQty = 1): تحسب كتوصيلين', () {
+      // باب (35 ألف) لا يندمج، تم اختيار تخم (PAIR) -> يعتبر قطعتين فيزيائيتين -> 70 ألف (توصيلين)
+      final doorPair = makeItem(
+        id: 'door',
+        fee: 35000,
+        qty: 1,
+        side: 'PAIR',
+        group: 'large',
+        mergeWith: [],
+        hasSideOptions: true,
+      );
+      expect(ShippingCalculator.computeShipping([doorPair]), 70000.0);
+      expect(ShippingCalculator.shipmentCount([doorPair]), 2);
+
+      // نفس الباب إذا تم اختيار جهة واحدة (RH) -> يحسب توصيل واحد (35 ألف)
+      final doorSingle = makeItem(
+        id: 'door',
+        fee: 35000,
+        qty: 1,
+        side: 'RH',
+        group: 'large',
+        mergeWith: [],
+        hasSideOptions: true,
+      );
+      expect(ShippingCalculator.computeShipping([doorSingle]), 35000.0);
+      expect(ShippingCalculator.shipmentCount([doorSingle]), 1);
+    });
+
+    test('قطعة تخم (PAIR) مع maxMergeQty = 2: التخم (قطعتين) يندمج في توصيل واحد', () {
+      // مرآة جانبية (5000 د.ع) تقبل دمج قطعتين مع بعض (maxMergeQty = 2)
+      // إذا اختار الزبون تخم 1 (PAIR) -> هو قطعتين -> يندمجون مع بعض في توصيل واحد (5000 د.ع)
+      final mirrorPair1 = makeItem(
+        id: 'mirror',
+        fee: 5000,
+        qty: 1,
+        side: 'PAIR',
+        group: 'small',
+        mergeWith: ['small'],
+        maxMerge: 2,
+        hasSideOptions: true,
+      );
+      expect(ShippingCalculator.computeShipping([mirrorPair1]), 5000.0);
+      expect(ShippingCalculator.shipmentCount([mirrorPair1]), 1);
+
+      // إذا اختار تخمين 2 (PAIR x 2) -> 4 قطع فيزيائية -> توصيلين (10,000 د.ع)
+      final mirrorPair2 = makeItem(
+        id: 'mirror',
+        fee: 5000,
+        qty: 2,
+        side: 'PAIR',
+        group: 'small',
+        mergeWith: ['small'],
+        maxMerge: 2,
+        hasSideOptions: true,
+      );
+      expect(ShippingCalculator.computeShipping([mirrorPair2]), 10000.0);
+      expect(ShippingCalculator.shipmentCount([mirrorPair2]), 2);
+    });
+
+    test('قطعة تخم (تخم بالعربي): تحسب أيضاً كقطعتين فيزيائيتين', () {
+      final itemArPair = makeItem(
+        id: 'headlight',
+        fee: 15000,
+        qty: 1,
+        side: 'تخم',
+        group: 'medium',
+        merge: false,
+        hasSideOptions: true,
+      );
+      // قطعتين ولا تندمج -> 30,000 د.ع وتوصيلين
+      expect(ShippingCalculator.computeShipping([itemArPair]), 30000.0);
+      expect(ShippingCalculator.shipmentCount([itemArPair]), 2);
     });
   });
 }

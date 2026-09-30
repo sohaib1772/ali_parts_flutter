@@ -20,7 +20,15 @@ class CartItemModel {
   });
 
   // Pair (تخم) costs 2x the single unit price only if product supports side options
-  double get unitPrice => (side == 'PAIR' && (product?.hasSideOptions ?? true))
+  bool get isPair {
+    if (side == null || (product != null && !product!.hasSideOptions)) return false;
+    final s = side!.toUpperCase().trim();
+    return s == 'PAIR' || s == 'تخم' || s == 'SET';
+  }
+
+  int get physicalQuantity => (quantity > 0 ? quantity : 1) * (isPair ? 2 : 1);
+
+  double get unitPrice => isPair
       ? ((product?.priceIqd ?? 0.0) * 2)
       : (product?.priceIqd ?? 0.0);
   double get totalPrice => unitPrice * quantity;

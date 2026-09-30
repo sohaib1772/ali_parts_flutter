@@ -1082,7 +1082,7 @@ class _AdminViewState extends State<AdminView> {
           'p_title': title,
           'p_body': body,
           'p_audience': _broadcastAudience,
-          if (finalImageUrl != null) 'p_image_url': finalImageUrl,
+          'p_image_url': finalImageUrl,
         },
       );
 

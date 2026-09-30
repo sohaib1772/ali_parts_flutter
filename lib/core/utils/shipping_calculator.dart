@@ -53,7 +53,7 @@ class ShippingCalculator {
 
       final double rawFee = product.shippingIqd ?? 0.0;
       final double fee = rawFee > 0 ? rawFee : 0.0;
-      final int qty = item.quantity > 0 ? item.quantity : 1;
+      final int qty = item.physicalQuantity;
       final ShippingGroup? group = normalizeDeliveryGroup(product.deliveryGroup);
       final bool mergeBool = product.mergeDelivery;
       final List<ShippingGroup> mergeWith = normalizeMergeWithGroups(
